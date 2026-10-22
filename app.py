@@ -1,6 +1,3 @@
-import json
-import os
-import re
 import subprocess
 import urllib.parse
 import gspread
@@ -12,36 +9,11 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets avec nettoyage chirurgical de la clé (suppression des caractères invalides)
+# Connexion Google Sheets native et standard via gspread
 @st.cache_resource
 def get_google_sheet():
-  json_path = ".streamlit/secret.json"
-
-  with open(json_path, "r", encoding="utf-8") as f:
-    creds_dict = json.load(f)
-
-  if "private_key" in creds_dict:
-    pk = str(creds_dict["private_key"])
-    # On enlève les en-têtes et pieds de page PEM
-    pk_clean = (
-        pk.replace("-----BEGIN PRIVATE KEY-----", "")
-        .replace("-----END PRIVATE KEY-----", "")
-        .replace("\\n", "\n")
-        .replace("\\\\n", "\n")
-    )
-
-    # On ne garde QUE les caractères valides du Base64 (lettres, chiffres, +, /, =) en éliminant les points ou autres parasites
-    body = re.sub(r"[^A-Za-z0-9+/=]", "", pk_clean)
-
-    # On découpe proprement en blocs de 64 caractères (standard PEM)
-    chunks = [body[i : i + 64] for i in range(0, len(body), 64)]
-    creds_dict["private_key"] = (
-        "-----BEGIN PRIVATE KEY-----\n"
-        + "\n".join(chunks)
-        + "\n-----END PRIVATE KEY-----\n"
-    )
-
-  gc = gspread.service_account_from_dict(creds_dict)
+  # Utilisation de la méthode officielle de gspread qui gère nativement le fichier JSON du service account
+  gc = gspread.service_account(filename=".streamlit/secret.json")
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
 
