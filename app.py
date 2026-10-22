@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import urllib.parse
+from google.auth.crypt import rsa
 import gspread
 import pandas as pd
 import streamlit as st
@@ -12,20 +13,14 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets ultra-robuste avec nettoyage automatique du JSON local
+# Connexion Google Sheets en interceptant et nettoyant la clé en mémoire
 @st.cache_resource
 def get_google_sheet():
   json_path = ".streamlit/secret.json"
 
-  if not os.path.exists(json_path):
-    st.error("❌ Le fichier `.streamlit/secret.json` est introuvable.")
-    st.stop()
-
-  # Lecture du fichier JSON original
   with open(json_path, "r", encoding="utf-8") as f:
     creds_dict = json.load(f)
 
-  # Nettoyage chirurgical de la clé privée pour éliminer tout point ou caractère corrompu
   if "private_key" in creds_dict:
     pk = str(creds_dict["private_key"])
     pk_clean = (
@@ -34,11 +29,10 @@ def get_google_sheet():
         .replace("\\n", "\n")
         .replace("\\\\n", "\n")
     )
-
-    # On ne garde que les caractères valides d'une clé RSA/Base64 (lettres, chiffres, +, /, =)
+    # Suppression totale de tout caractère parasite (points, espaces, etc.)
     body = re.sub(r"[^A-Za-z0-9+/=]", "", pk_clean)
 
-    # On reformate en blocs de 64 caractères (standard PEM exact)
+    # Reconstruction exacte au format PEM standard
     chunks = [body[i : i + 64] for i in range(0, len(body), 64)]
     creds_dict["private_key"] = (
         "-----BEGIN PRIVATE KEY-----\n"
@@ -46,13 +40,8 @@ def get_google_sheet():
         + "\n-----END PRIVATE KEY-----\n"
     )
 
-  # On écrit un fichier propre temporaire exempt de toute erreur
-  clean_path = "clean_secret.json"
-  with open(clean_path, "w", encoding="utf-8") as f:
-    json.dump(creds_dict, f)
-
-  # Connexion propre via gspread avec ce fichier nettoyé
-  gc = gspread.service_account(filename=clean_path)
+  # Connexion directe par dictionnaire nettoyé
+  gc = gspread.service_account_from_dict(creds_dict)
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
 
@@ -196,60 +185,62 @@ else:
         except Exception:
           price_filter = ""
 
-      safe_query = urllib.parse.quote(model_query)
-      target_page = int(row_data["Page"])
+        safe_query = urllib.parse.quote(model_query)
+        target_page = int(row_data["Page"])
 
-      fallback_url = (
-          "https://www.autoscout24.be/fr/lst?q="
-          + safe_query
-          + price_filter
-          + "&page="
-          + str(target_page)
-          + "&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
-          "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=8930%20Menen&lat=50.79669&lon=3.11693"
+        fallback_url = (
+            "https://www.autoscout24.be/fr/lst?q="
+            + safe_query
+            + price_filter
+            + "&page="
+            + str(target_page)
+            + "&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
+            "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=8930%20Menen&lat=50.79669&lon=3.11693"
+        )
+        st.link_button(
+            f"🔍 Voir l'annonce sur AutoScout24 (Page {target_page})",
+            fallback_url,
+        )
+
+      st.markdown("---")
+
+      statuts_possibles = [
+          "Nouveau",
+          "Appelé - Répondeur",
+          "À relancer",
+          "RDV / Intéressé",
+          "Pas intéressé / Vendu",
+      ]
+      current_statut = (
+          str(row_data["Statut"])
+          if str(row_data["Statut"]) in statuts_possibles
+          else "Nouveau"
       )
-      st.link_button(
-          f"🔍 Voir l'annonce sur AutoScout24 (Page {target_page})",
-          fallback_url,
+
+      nouveau_statut = st.selectbox(
+          "Statut de l'appel",
+          statuts_possibles,
+          index=statuts_possibles.index(current_statut),
       )
 
-    st.markdown("---")
+      current_comment = (
+          str(row_data["Commentaires"])
+          if pd.notna(row_data["Commentaires"])
+          else ""
+      )
+      nouveau_commentaire = st.text_area(
+          "Commentaire d'appel", value=current_comment
+      )
 
-    statuts_possibles = [
-        "Nouveau",
-        "Appelé - Répondeur",
-        "À relancer",
-        "RDV / Intéressé",
-        "Pas intéressé / Vendu",
-    ]
-    current_statut = (
-        str(row_data["Statut"])
-        if str(row_data["Statut"]) in statuts_possibles
-        else "Nouveau"
-    )
+      if st.button("💾 Enregistrer les modifications"):
+        df.loc[df["ID"] == selected_id, "Statut"] = str(nouveau_statut)
+        df.loc[df["ID"] == selected_id, "Commentaires"] = str(
+            nouveau_commentaire
+        )
 
-    nouveau_statut = st.selectbox(
-        "Statut de l'appel",
-        statuts_possibles,
-        index=statuts_possibles.index(current_statut),
-    )
+        worksheet.clear()
+        lignes_maj = [df.columns.values.tolist()] + df.values.tolist()
+        worksheet.update(lignes_maj)
 
-    current_comment = (
-        str(row_data["Commentaires"])
-        if pd.notna(row_data["Commentaires"])
-        else ""
-    )
-    nouveau_commentaire = st.text_area(
-        "Commentaire d'appel", value=current_comment
-    )
-
-    if st.button("💾 Enregistrer les modifications"):
-      df.loc[df["ID"] == selected_id, "Statut"] = str(nouveau_statut)
-      df.loc[df["ID"] == selected_id, "Commentaires"] = str(nouveau_commentaire)
-
-      worksheet.clear()
-      lignes_maj = [df.columns.values.tolist()] + df.values.tolist()
-      worksheet.update(lignes_maj)
-
-      st.success("Modifications enregistrées et synchronisées en temps réel !")
-      st.rerun()
+        st.success("Modifications enregistrées et synchronisées en temps réel !")
+        st.rerun()
