@@ -14,7 +14,7 @@ st.set_page_config(
 SHEET_ID = "1uMm1bqAnVb7Qro8biw7xX6NT4QdURD5ILOQy3CwGy_4"
 
 
-# Connexion Google Sheets en cache sécurisé (ne bloque plus le démarrage)
+# Connexion Google Sheets hautement optimisée avec mise en cache
 @st.cache_resource
 def get_google_sheet():
   try:
@@ -43,7 +43,7 @@ def get_google_sheet():
     sh = gc.open_by_key(SHEET_ID)
     return sh.get_worksheet(0)
   except Exception as e:
-    st.error(f"Erreur critique de connexion Google Sheets : {e}")
+    st.error(f"Erreur de connexion Google Sheets : {e}")
     return None
 
 
@@ -197,7 +197,7 @@ def run_scraper_integrated(worksheet, max_pages=2):
     except Exception:
       break
 
-  status_text.text("Mise à jour du Google Sheet...")
+  status_text.text("Mise à jour du Google Sheet en cours...")
   scraped_df = pd.DataFrame(scraped_items)
 
   if not scraped_df.empty:
@@ -255,11 +255,15 @@ def run_scraper_integrated(worksheet, max_pages=2):
   status_text.empty()
 
 
-# Récupération de la feuille (de manière non bloquante pour l'affichage initial)
+# Connexion sécurisée
 worksheet = get_google_sheet()
-
 if worksheet is None:
+  st.error(
+      "Impossible de se connecter à Google Sheets. Vérifie tes secrets dans"
+      " Streamlit."
+  )
   st.stop()
+
 
 # --- BOUTON DE LANCEMENT DU SCRAPER ---
 st.markdown("---")
@@ -281,36 +285,41 @@ with col_sync2:
   )
 st.markdown("---")
 
-# Chargement des données depuis Google Sheets
-try:
-  data = worksheet.get_all_records()
-  df = (
-      pd.DataFrame(data)
-      if data
-      else pd.DataFrame(
-          columns=[
-              "ID",
-              "Titre",
-              "Année",
-              "KM",
-              "Prix",
-              "Ville",
-              "Téléphone",
-              "Lien",
-              "Page",
-              "Statut",
-              "Commentaires",
-          ]
-      )
-  )
-except Exception as e:
-  st.error(f"Erreur de lecture du Google Sheet : {e}")
-  st.stop()
+
+# Chargement en cache des données Google Sheets pour éviter les latences
+@st.cache_data(ttl=60)
+def load_data_from_sheet():
+  try:
+    data = worksheet.get_all_records()
+    return (
+        pd.DataFrame(data)
+        if data
+        else pd.DataFrame(
+            columns=[
+                "ID",
+                "Titre",
+                "Année",
+                "KM",
+                "Prix",
+                "Ville",
+                "Téléphone",
+                "Lien",
+                "Page",
+                "Statut",
+                "Commentaires",
+            ]
+        )
+    )
+  except Exception:
+    return pd.DataFrame()
+
+
+df = load_data_from_sheet()
 
 if df.empty:
   st.warning(
-      "⚠️ La base de données est vide. Veuillez lancer le scraper via le"
-      " bouton ci-dessus."
+      "⚠️ La base de données est vide ou en cours de chargement. Veuillez"
+      " lancer le scraper via le bouton ci-dessus."
   )
 else:
   df["Page"] = (
@@ -436,6 +445,7 @@ else:
         worksheet.clear()
         lignes_maj = [df.columns.values.tolist()] + df.values.tolist()
         worksheet.update(lignes_maj)
+        st.cache_data.clear()  # Efface le cache pour forcer la mise à jour immédiate
 
         st.success("Modifications enregistrées et synchronisées en temps réel !")
         st.rerun()
