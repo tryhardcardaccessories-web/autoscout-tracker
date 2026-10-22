@@ -11,8 +11,10 @@ st.set_page_config(
     page_title="AutoScout Tracker", page_icon="🚗", layout="wide"
 )
 
+SHEET_ID = "1uMm1bqAnVb7Qro8biw7xX6NT4QdURD5ILOQy3CwGy_4"
 
-# Connexion Google Sheets robuste via st.secrets (Cloud) ou le fichier local
+
+# Connexion Google Sheets en cache sécurisé (ne bloque plus le démarrage)
 @st.cache_resource
 def get_google_sheet():
   try:
@@ -38,16 +40,12 @@ def get_google_sheet():
         ],
     )
     gc = gspread.authorize(creds)
-
-    sheet_id = "1uMm1bqAnVb7Qro8biw7xX6NT4QdURD5ILOQy3CwGy_4"
-    sh = gc.open_by_key(sheet_id)
+    sh = gc.open_by_key(SHEET_ID)
     return sh.get_worksheet(0)
   except Exception as e:
     st.error(f"Erreur critique de connexion Google Sheets : {e}")
-    st.stop()
+    return None
 
-
-worksheet = get_google_sheet()
 
 st.title("🚗 AutoScout Tracker - CRM Particuliers")
 st.markdown(
@@ -58,7 +56,7 @@ st.markdown(
 BASE_URL = "https://www.autoscout24.be/fr/lst?fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=8930%20Menen&lat=50.79669&lon=3.11693"
 
 
-def run_scraper_integrated(max_pages=2):
+def run_scraper_integrated(worksheet, max_pages=2):
   headers = {
       "User-Agent": (
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
@@ -72,24 +70,25 @@ def run_scraper_integrated(max_pages=2):
   except Exception:
     data = []
 
-  if data:
-    db_df = pd.DataFrame(data)
-  else:
-    db_df = pd.DataFrame(
-        columns=[
-            "ID",
-            "Titre",
-            "Année",
-            "KM",
-            "Prix",
-            "Ville",
-            "Téléphone",
-            "Lien",
-            "Page",
-            "Statut",
-            "Commentaires",
-        ]
-    )
+  db_df = (
+      pd.DataFrame(data)
+      if data
+      else pd.DataFrame(
+          columns=[
+              "ID",
+              "Titre",
+              "Année",
+              "KM",
+              "Prix",
+              "Ville",
+              "Téléphone",
+              "Lien",
+              "Page",
+              "Statut",
+              "Commentaires",
+          ]
+      )
+  )
 
   if "ID" in db_df.columns and not db_df.empty:
     db_df["ID"] = (
@@ -97,17 +96,7 @@ def run_scraper_integrated(max_pages=2):
     )
     current_max_id = db_df["ID"].max()
   else:
-    db_df["ID"] = (
-        range(1, len(db_df) + 1) if not db_df.empty else []
-    )
     current_max_id = 0
-
-  if "Page" in db_df.columns:
-    db_df["Page"] = (
-        pd.to_numeric(db_df["Page"], errors="coerce").fillna(1).astype(int)
-    )
-  else:
-    db_df["Page"] = 1
 
   scraped_items = []
   progres_bar = st.progress(0)
@@ -208,19 +197,18 @@ def run_scraper_integrated(max_pages=2):
     except Exception:
       break
 
-  status_text.text("Mise à jour du Google Sheet en cours...")
+  status_text.text("Mise à jour du Google Sheet...")
   scraped_df = pd.DataFrame(scraped_items)
 
   if not scraped_df.empty:
     scraped_df["Key"] = (
         scraped_df["Titre"].astype(str) + "_" + scraped_df["Prix"].astype(str)
     )
-    if not db_df.empty:
-      db_df["Key"] = (
-          db_df["Titre"].astype(str) + "_" + db_df["Prix"].astype(str)
-      )
-    else:
-      db_df["Key"] = ""
+    db_df["Key"] = (
+        db_df["Titre"].astype(str) + "_" + db_df["Prix"].astype(str)
+        if not db_df.empty
+        else ""
+    )
 
     existing_keys = set(db_df["Key"].tolist())
     new_entries = []
@@ -252,12 +240,11 @@ def run_scraper_integrated(max_pages=2):
       )
       db_df.loc[sold_mask, "Statut"] = "Pas intéressé / Vendu"
 
-    if new_entries:
-      new_df = pd.DataFrame(new_entries)
-      final_df = pd.concat([db_df, new_df], ignore_index=True)
-    else:
-      final_df = db_df
-
+    final_df = (
+        pd.concat([db_df, pd.DataFrame(new_entries)], ignore_index=True)
+        if new_entries
+        else db_df
+    )
     final_df = final_df.drop(columns=["Key"], errors="ignore")
     worksheet.clear()
     worksheet.update(
@@ -268,6 +255,12 @@ def run_scraper_integrated(max_pages=2):
   status_text.empty()
 
 
+# Récupération de la feuille (de manière non bloquante pour l'affichage initial)
+worksheet = get_google_sheet()
+
+if worksheet is None:
+  st.stop()
+
 # --- BOUTON DE LANCEMENT DU SCRAPER ---
 st.markdown("---")
 col_sync1, col_sync2 = st.columns([1, 3])
@@ -275,8 +268,7 @@ with col_sync1:
   if st.button("🔄 Lancer le Scraper (Mise à jour)"):
     with st.spinner("🚀 Scraping et synchronisation en cours..."):
       try:
-        # Limité à 2 pages pour éviter le blocage du serveur cloud
-        run_scraper_integrated(max_pages=2)
+        run_scraper_integrated(worksheet, max_pages=2)
         st.success("✨ Mise à jour terminée avec succès !")
         st.rerun()
       except Exception as e:
@@ -292,24 +284,25 @@ st.markdown("---")
 # Chargement des données depuis Google Sheets
 try:
   data = worksheet.get_all_records()
-  if data:
-    df = pd.DataFrame(data)
-  else:
-    df = pd.DataFrame(
-        columns=[
-            "ID",
-            "Titre",
-            "Année",
-            "KM",
-            "Prix",
-            "Ville",
-            "Téléphone",
-            "Lien",
-            "Page",
-            "Statut",
-            "Commentaires",
-        ]
-    )
+  df = (
+      pd.DataFrame(data)
+      if data
+      else pd.DataFrame(
+          columns=[
+              "ID",
+              "Titre",
+              "Année",
+              "KM",
+              "Prix",
+              "Ville",
+              "Téléphone",
+              "Lien",
+              "Page",
+              "Statut",
+              "Commentaires",
+          ]
+      )
+  )
 except Exception as e:
   st.error(f"Erreur de lecture du Google Sheet : {e}")
   st.stop()
@@ -320,12 +313,11 @@ if df.empty:
       " bouton ci-dessus."
   )
 else:
-  if "Page" in df.columns:
-    df["Page"] = (
-        pd.to_numeric(df["Page"], errors="coerce").fillna(1).astype(int)
-    )
-  else:
-    df["Page"] = 1
+  df["Page"] = (
+      pd.to_numeric(df["Page"], errors="coerce").fillna(1).astype(int)
+      if "Page" in df.columns
+      else 1
+  )
 
   for col in ["Statut", "Commentaires", "Téléphone", "Lien", "Titre", "Ville"]:
     if col in df.columns:
@@ -336,14 +328,15 @@ else:
   search_query = st.text_input(
       "🔍 Rechercher dans les fiches (Modèle, Ville, Commentaire...)", ""
   )
-  if search_query:
-    df_filtered = df[
-        df.astype(str)
-        .apply(lambda x: x.str.contains(search_query, case=False))
-        .any(axis=1)
-    ]
-  else:
-    df_filtered = df
+  df_filtered = (
+      df[
+          df.astype(str)
+          .apply(lambda x: x.str.contains(search_query, case=False))
+          .any(axis=1)
+      ]
+      if search_query
+      else df
+  )
 
   st.subheader("📋 Liste des annonces")
   display_cols = [c for c in df_filtered.columns if c != "Lien"]
@@ -422,6 +415,7 @@ else:
       nouveau_statut = st.selectbox(
           "Statut de l'appel",
           statuts_possibles,
+          index=statuts_possibles.index(current_statut),
       )
 
       current_comment = (
