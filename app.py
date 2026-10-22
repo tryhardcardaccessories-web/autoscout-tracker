@@ -207,4 +207,5 @@ else:
         worksheet.clear()
         worksheet.update([df.columns.values.tolist()] + df.values.tolist())
 
-        st.success("Modifications enregistrées et synchron
+st.success("Modifications enregistrées et synchronisées en temps réel !")
+st.rerun()
