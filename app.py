@@ -12,20 +12,24 @@ import gspread
 import pandas as pd
 
 
-# Connexion Google Sheets directe et robuste via st.secrets
+# Connexion Google Sheets robuste via un fichier JSON temporaire généré depuis st.secrets
 @st.cache_resource
 def get_google_sheet():
   # On récupère le dictionnaire des secrets configurés sur Streamlit Cloud
   secrets_dict = dict(st.secrets["gcp_service_account"])
 
-  # On s'assure que la clé privée restitue de vrais sauts de ligne
+  # On s'assure que les retours à la ligne de la clé privée sont correctement interprétés
   if "private_key" in secrets_dict:
     key = secrets_dict["private_key"]
     key = key.replace("\\\\n", "\n").replace("\\n", "\n")
     secrets_dict["private_key"] = key
 
-  # Connexion directe en mémoire sans fichier temporaire
-  gc = gspread.service_account_from_dict(secrets_dict)
+  # On écrit un vrai fichier temp_secret.json propre sur le serveur en ligne
+  with open("temp_secret.json", "w") as f:
+    json.dump(secrets_dict, f)
+
+  # gspread lit ce fichier temporaire sans aucune erreur cryptographique PEM
+  gc = gspread.service_account(filename="temp_secret.json")
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
 
