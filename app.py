@@ -1,3 +1,5 @@
+import json
+import os
 import subprocess
 import urllib.parse
 import gspread
@@ -9,11 +11,23 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets directe via le fichier JSON inclus dans le projet
+# Connexion Google Sheets en chargeant et nettoyant le JSON local
 @st.cache_resource
 def get_google_sheet():
-  # gspread lit directement le fichier secret.json présent dans le dossier .streamlit
-  gc = gspread.service_account(filename=".streamlit/secret.json")
+  json_path = ".streamlit/secret.json"
+
+  # On lit le fichier JSON brut
+  with open(json_path, "r", encoding="utf-8") as f:
+    creds_dict = json.load(f)
+
+  # On nettoie et corrige les sauts de ligne de la clé privée de force
+  if "private_key" in creds_dict:
+    pk = creds_dict["private_key"]
+    pk = pk.replace("\\\\n", "\n").replace("\\n", "\n")
+    creds_dict["private_key"] = pk
+
+  # On passe le dictionnaire nettoyé directement à gspread
+  gc = gspread.service_account_from_dict(creds_dict)
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
 
