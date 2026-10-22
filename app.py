@@ -11,21 +11,25 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets avec nettoyage automatique et sécurisé du format PEM
+# Connexion Google Sheets ultra-robuste (gère st.secrets et le fichier local)
 @st.cache_resource
 def get_google_sheet():
-  if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-    creds_dict = dict(st.secrets["gcp_service_account"])
+  try:
+    if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
+      # Récupération depuis les secrets Streamlit Cloud
+      creds_dict = dict(st.secrets["gcp_service_account"])
+    else:
+      # Récupération depuis le fichier local
+      import json
 
-    # Nettoyage et normalisation de la clé privée pour éviter tout plantage cryptographique
+      json_path = ".streamlit/secret.json"
+      with open(json_path, "r", encoding="utf-8") as f:
+        creds_dict = json.load(f)
+
+    # Nettoyage impératif de la clé privée pour forcer de vrais sauts de ligne
     if "private_key" in creds_dict:
       pk = str(creds_dict["private_key"])
-      # Remplace les \n littéraux par de vrais retours à la ligne
-      pk = pk.replace("\\n", "\n")
-      if not pk.startswith("-----BEGIN PRIVATE KEY-----"):
-        pk = "-----BEGIN PRIVATE KEY-----\n" + pk
-      if not pk.endswith("-----END PRIVATE KEY-----"):
-        pk = pk + "\n-----END PRIVATE KEY-----"
+      pk = pk.replace("\\\\n", "\n").replace("\\n", "\n")
       creds_dict["private_key"] = pk
 
     creds = service_account.Credentials.from_service_account_info(
@@ -35,19 +39,12 @@ def get_google_sheet():
             "https://www.googleapis.com/auth/drive",
         ],
     )
-  else:
-    json_path = ".streamlit/secret.json"
-    creds = service_account.Credentials.from_service_account_file(
-        json_path,
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ],
-    )
-
-  gc = gspread.authorize(creds)
-  sh = gc.open("AUTOSCOUT24")
-  return sh.get_worksheet(0)
+    gc = gspread.authorize(creds)
+    sh = gc.open("AUTOSCOUT24")
+    return sh.get_worksheet(0)
+  except Exception as e:
+    st.error(f"Erreur critique de connexion Google Sheets : {e}")
+    st.stop()
 
 
 worksheet = get_google_sheet()
