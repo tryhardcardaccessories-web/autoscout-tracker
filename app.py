@@ -1,8 +1,8 @@
 import json
 import os
+import re
 import subprocess
 import urllib.parse
-from cryptography.hazmat.primitives import serialization
 import gspread
 import pandas as pd
 import streamlit as st
@@ -12,45 +12,28 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets ultra-sécurisée avec validation de la clé
+# Connexion Google Sheets avec nettoyage chirurgical de la clé (suppression des caractères invalides)
 @st.cache_resource
 def get_google_sheet():
   json_path = ".streamlit/secret.json"
 
-  if not os.path.exists(json_path):
-    st.error(
-        "❌ Le fichier `.streamlit/secret.json` est introuvable dans le projet."
-    )
-    st.stop()
-
   with open(json_path, "r", encoding="utf-8") as f:
-    try:
-      creds_dict = json.load(f)
-    except Exception as e:
-      st.error(
-          f"❌ Le fichier `secret.json` n'est pas un JSON valide : {e}"
-      )
-      st.stop()
+    creds_dict = json.load(f)
 
-  # Vérification et nettoyage radical de la clé privée
   if "private_key" in creds_dict:
     pk = str(creds_dict["private_key"])
-
-    # Nettoyage des balises et des sauts de ligne parasites
+    # On enlève les en-têtes et pieds de page PEM
     pk_clean = (
         pk.replace("-----BEGIN PRIVATE KEY-----", "")
         .replace("-----END PRIVATE KEY-----", "")
         .replace("\\n", "\n")
         .replace("\\\\n", "\n")
-        .replace("\r", "")
     )
-    # Suppression de tous les espaces/retours à la ligne pour recréer un bloc propre
-    lines = [
-        line.strip() for line in pk_clean.split("\n") if line.strip()
-    ]
-    body = "".join(lines)
 
-    # Reconstitution standardisée PEM (en blocs de 64 caractères)
+    # On ne garde QUE les caractères valides du Base64 (lettres, chiffres, +, /, =) en éliminant les points ou autres parasites
+    body = re.sub(r"[^A-Za-z0-9+/=]", "", pk_clean)
+
+    # On découpe proprement en blocs de 64 caractères (standard PEM)
     chunks = [body[i : i + 64] for i in range(0, len(body), 64)]
     creds_dict["private_key"] = (
         "-----BEGIN PRIVATE KEY-----\n"
@@ -58,17 +41,9 @@ def get_google_sheet():
         + "\n-----END PRIVATE KEY-----\n"
     )
 
-  try:
-    gc = gspread.service_account_from_dict(creds_dict)
-    sh = gc.open("AUTOSCOUT24")
-    return sh.get_worksheet(0)
-  except Exception as e:
-    st.error(
-        "❌ Erreur critique lors de l'authentification Google Sheets."
-        " Vérifie que ton fichier `secret.json` contient bien une clé privée"
-        f" valide.\n\nDétails techniques : {e}"
-    )
-    st.stop()
+  gc = gspread.service_account_from_dict(creds_dict)
+  sh = gc.open("AUTOSCOUT24")
+  return sh.get_worksheet(0)
 
 
 worksheet = get_google_sheet()
