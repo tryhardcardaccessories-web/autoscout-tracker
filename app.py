@@ -11,22 +11,36 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets en chargeant et nettoyant le JSON local
+# Connexion Google Sheets avec reconstruction chirurgicale de la clé PEM
 @st.cache_resource
 def get_google_sheet():
   json_path = ".streamlit/secret.json"
 
-  # On lit le fichier JSON brut
   with open(json_path, "r", encoding="utf-8") as f:
     creds_dict = json.load(f)
 
-  # On nettoie et corrige les sauts de ligne de la clé privée de force
+  # Reconstruction totale et blindée de la clé privée PEM
   if "private_key" in creds_dict:
     pk = creds_dict["private_key"]
-    pk = pk.replace("\\\\n", "\n").replace("\\n", "\n")
-    creds_dict["private_key"] = pk
+    # On nettoie tout (retours à la ligne littéraux, espaces, etc.)
+    body = (
+        pk.replace("-----BEGIN PRIVATE KEY-----", "")
+        .replace("-----END PRIVATE KEY-----", "")
+        .replace("\\n", "")
+        .replace("\\\\n", "")
+        .replace("\n", "")
+        .replace(" ", "")
+    )
+    # On découpe proprement en blocs de 64 caractères (standard PEM)
+    chunks = [body[i : i + 64] for i in range(0, len(body), 64)]
+    # On réassemble avec de vrais sauts de ligne garantis
+    creds_dict["private_key"] = (
+        "-----BEGIN PRIVATE KEY-----\n"
+        + "\n".join(chunks)
+        + "\n-----END PRIVATE KEY-----\n"
+    )
 
-  # On passe le dictionnaire nettoyé directement à gspread
+  # Connexion propre via gspread
   gc = gspread.service_account_from_dict(creds_dict)
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
