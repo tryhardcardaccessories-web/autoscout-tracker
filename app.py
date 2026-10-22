@@ -9,11 +9,25 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets native et standard via gspread
+# Connexion Google Sheets en reconstruisant l'objet d'authentification proprement
 @st.cache_resource
 def get_google_sheet():
-  # Utilisation de la méthode officielle de gspread qui gère nativement le fichier JSON du service account
-  gc = gspread.service_account(filename=".streamlit/secret.json")
+  # On récupère le bloc de secrets configuré dans Streamlit Cloud
+  sec = st.secrets["gcp_service_account"]
+  creds_dict = {
+      "type": sec["type"],
+      "project_id": sec["project_id"],
+      "private_key_id": sec["private_key_id"],
+      "private_key": sec["private_key"].replace("\\n", "\n"),
+      "client_email": sec["client_email"],
+      "client_id": sec["client_id"],
+      "auth_uri": sec["auth_uri"],
+      "token_uri": sec["token_uri"],
+      "auth_provider_x509_cert_url": sec["auth_provider_x509_cert_url"],
+      "client_x509_cert_url": sec["client_x509_cert_url"],
+  }
+
+  gc = gspread.service_account_from_dict(creds_dict)
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
 
@@ -214,5 +228,5 @@ else:
         lignes_maj = [df.columns.values.tolist()] + df.values.tolist()
         worksheet.update(lignes_maj)
 
-        st.success("Modifications enregistrées et synchronisées en temps réel !")
+        st.success("Modifications enregistrées et synchronisées en temps réel !️")
         st.rerun()
