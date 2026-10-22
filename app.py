@@ -1,32 +1,34 @@
-import json
-import os
-import urllib.parse
-import subprocess
-import gspread
-import pandas as pd
-import streamlit as st
-
-st.set_page_config(
-    page_title="AutoScout Tracker", page_icon="🚗", layout="wide"
-)
-
-
-# Connexion sécurisée Google Sheets via un fichier temporaire virtuel (contourne les erreurs de clés)
-@st.cache_resource
-def get_google_sheet():
-  if "gcp_service_account" in st.secrets:
-    # On reconstruit proprement le dictionnaire des secrets
-    secrets_dict = dict(st.secrets["gcp_service_account"])
-
-    # Écriture d'un fichier temporaire 'temp_secret.json' à la volée sur le serveur cloud
-    with open("temp_secret.json", "w") as f:
-      json.dump(secrets_dict, f)
-
-    gc = gspread.service_account(filename="temp_secret.json")
-  else:
-    dossier_actuel = os.path.dirname(os.path.abspath(__file__))
-    chemin_json = os.path.join(dossier_actuel, "secret.json")
-    gc = gspread.service_account(filename=chemin_json)
-
-  sh = gc.open("AUTOSCOUT24")
-  return sh.get_worksheet(0)
+# --- BOUTON DE LANCEMENT DU SCRAPER ---
+st.markdown("---")
+col_sync1, col_sync2 = st.columns([1, 3])
+with col_sync1:
+  if st.button("🔄 Lancer le Scraper (Mise à jour)"):
+    # Utilisation d'un conteneur de statut interactif pour voir l'évolution
+    with st.status(
+        "🚀 Scraping d'AutoScout24 en cours...", expanded=True
+    ) as status:
+      st.write("Connexion au site et récupération des annonces...")
+      try:
+        # On lance le scraper en arrière-plan
+        process = subprocess.run(
+            ["python", "scraper.py"], capture_output=True, text=True, check=True
+        )
+        status.update(
+            label="✨ Mise à jour terminée avec succès !",
+            state="complete",
+            expanded=False,
+        )
+        st.success(
+            "Toutes les données ont été synchronisées avec Google Sheets !"
+        )
+        st.rerun()
+      except subprocess.CalledProcessError as e:
+        status.update(label="❌ Erreur lors du scraping", state="error")
+        st.error(f"Détails de l'erreur : {e.stderr}")
+with col_sync2:
+  st.markdown(
+      "<br>Cliquez ici pour synchroniser les dernières annonces en direct"
+      " dans le Google Sheet partagé.",
+      unsafe_allow_html=True,
+  )
+st.markdown("---")
