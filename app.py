@@ -7,44 +7,50 @@ import gspread
 import pandas as pd
 import streamlit as st
 
-# --- PATCH MAGIQUE POUR PYTHON & CRYPTOGRAPHY ---
-# Force la conversion de la clé en bytes si elle arrive sous forme de texte
-_original_load_pem = serialization.load_pem_private_key
-
-
-def _patched_load_pem(data, password, backend=None, **kwargs):
-  if isinstance(data, str):
-    data = data.encode("utf-8")
-  return _original_load_pem(data, password=password, backend=backend, **kwargs)
-
-
-serialization.load_pem_private_key = _patched_load_pem
-# -----------------------------------------------
-
 st.set_page_config(
     page_title="AutoScout Tracker", page_icon="🚗", layout="wide"
 )
 
 
-# Connexion Google Sheets ultra-robuste
+# Connexion Google Sheets ultra-sécurisée avec validation de la clé
 @st.cache_resource
 def get_google_sheet():
   json_path = ".streamlit/secret.json"
 
-  with open(json_path, "r", encoding="utf-8") as f:
-    creds_dict = json.load(f)
+  if not os.path.exists(json_path):
+    st.error(
+        "❌ Le fichier `.streamlit/secret.json` est introuvable dans le projet."
+    )
+    st.stop()
 
-  # Nettoyage et reformatage propre de la clé privée
+  with open(json_path, "r", encoding="utf-8") as f:
+    try:
+      creds_dict = json.load(f)
+    except Exception as e:
+      st.error(
+          f"❌ Le fichier `secret.json` n'est pas un JSON valide : {e}"
+      )
+      st.stop()
+
+  # Vérification et nettoyage radical de la clé privée
   if "private_key" in creds_dict:
-    pk = creds_dict["private_key"]
-    body = (
+    pk = str(creds_dict["private_key"])
+
+    # Nettoyage des balises et des sauts de ligne parasites
+    pk_clean = (
         pk.replace("-----BEGIN PRIVATE KEY-----", "")
         .replace("-----END PRIVATE KEY-----", "")
-        .replace("\\n", "")
-        .replace("\\\\n", "")
-        .replace("\n", "")
-        .replace(" ", "")
+        .replace("\\n", "\n")
+        .replace("\\\\n", "\n")
+        .replace("\r", "")
     )
+    # Suppression de tous les espaces/retours à la ligne pour recréer un bloc propre
+    lines = [
+        line.strip() for line in pk_clean.split("\n") if line.strip()
+    ]
+    body = "".join(lines)
+
+    # Reconstitution standardisée PEM (en blocs de 64 caractères)
     chunks = [body[i : i + 64] for i in range(0, len(body), 64)]
     creds_dict["private_key"] = (
         "-----BEGIN PRIVATE KEY-----\n"
@@ -52,9 +58,17 @@ def get_google_sheet():
         + "\n-----END PRIVATE KEY-----\n"
     )
 
-  gc = gspread.service_account_from_dict(creds_dict)
-  sh = gc.open("AUTOSCOUT24")
-  return sh.get_worksheet(0)
+  try:
+    gc = gspread.service_account_from_dict(creds_dict)
+    sh = gc.open("AUTOSCOUT24")
+    return sh.get_worksheet(0)
+  except Exception as e:
+    st.error(
+        "❌ Erreur critique lors de l'authentification Google Sheets."
+        " Vérifie que ton fichier `secret.json` contient bien une clé privée"
+        f" valide.\n\nDétails techniques : {e}"
+    )
+    st.stop()
 
 
 worksheet = get_google_sheet()
