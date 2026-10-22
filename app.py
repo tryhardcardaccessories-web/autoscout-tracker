@@ -10,11 +10,16 @@ st.set_page_config(
 )
 
 
-# Connexion sécurisée Google Sheets (gère le local et le cloud Streamlit)
+# Connexion sécurisée Google Sheets avec correction automatique de la clé privée
 @st.cache_resource
 def get_google_sheet():
   if "gcp_service_account" in st.secrets:
     creds_dict = dict(st.secrets["gcp_service_account"])
+    # Corrige automatiquement les retours à la ligne de la clé privée s'ils sont sous forme de texte
+    if "private_key" in creds_dict:
+      creds_dict["private_key"] = creds_dict["private_key"].replace(
+          "\\n", "\n"
+      )
     gc = gspread.service_account_from_dict(creds_dict)
   else:
     dossier_actuel = os.path.dirname(os.path.abspath(__file__))
@@ -207,5 +212,5 @@ else:
         worksheet.clear()
         worksheet.update([df.columns.values.tolist()] + df.values.tolist())
 
-st.success("Modifications enregistrées et synchronisées en temps réel !")
-st.rerun()
+        st.success("Modifications enregistrées et synchronisées en temps réel !")
+        st.rerun()
