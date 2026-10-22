@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets en nettoyant à la source le texte de la clé
+# Connexion Google Sheets avec nettoyage radical anti-caractères parasites (points, etc.)
 @st.cache_resource
 def get_google_sheet():
   json_path = ".streamlit/secret.json"
@@ -20,18 +20,22 @@ def get_google_sheet():
   with open(json_path, "r", encoding="utf-8") as f:
     creds_dict = json.load(f)
 
-  # On récupère la clé brute et on extrait uniquement le contenu valide de la clé Base64
   if "private_key" in creds_dict:
     pk = str(creds_dict["private_key"])
-    # On enlève tout le superflu, les retours chariot et les caractères parasites
-    clean_chars = re.sub(
-        r"[^A-Za-z0-9+/=]",
-        "",
+    # Nettoyage des balises PEM et des sauts de ligne
+    pk_clean = (
         pk.replace("-----BEGIN PRIVATE KEY-----", "")
-        .replace("-----END PRIVATE KEY-----", ""),
+        .replace("-----END PRIVATE KEY-----", "")
+        .replace("\\n", "\n")
+        .replace("\\\\n", "\n")
     )
-    # On reconstruit une clé PEM parfaite aux normes cryptographiques strictes
-    chunks = [clean_chars[i : i + 64] for i in range(0, len(clean_chars), 64)]
+
+    # SUPPRESSION TOTALE DE TOUT CARACTÈRE NON VALIDE (y compris les points parasites !)
+    # On ne conserve que les caractères autorisés en Base64 (lettres, chiffres, +, /, =)
+    body = re.sub(r"[^A-Za-z0-9+/=]", "", pk_clean)
+
+    # Reconstruction propre aux normes PEM exactes (blocs de 64 caractères)
+    chunks = [body[i : i + 64] for i in range(0, len(body), 64)]
     creds_dict["private_key"] = (
         "-----BEGIN PRIVATE KEY-----\n"
         + "\n".join(chunks)
@@ -172,72 +176,62 @@ else:
             "🔗 Ouvrir l'annonce exacte sur AutoScout24", row_data["Lien"]
         )
       else:
-        raw_title = str(row_data["Titre"])
-        words = raw_title.split()
-        model_query = " ".join(words[:2]) if len(words) >= 2 else raw_title
+      ...
 
-        try:
-          p_val = int(str(row_data["Prix"]).replace(" ", ""))
-          price_filter = f"&pricefrom={max(0, p_val - 100)}&priceto={p_val + 100}"
-        except Exception:
-          price_filter = ""
+      safe_query = urllib.parse.quote(model_query)
+      target_page = int(row_data["Page"])
 
-        safe_query = urllib.parse.quote(model_query)
-        target_page = int(row_data["Page"])
-
-        fallback_url = (
-            "https://www.autoscout24.be/fr/lst?q="
-            + safe_query
-            + price_filter
-            + "&page="
-            + str(target_page)
-            + "&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
-            "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=8930%20Menen&lat=50.79669&lon=3.11693"
-        )
-        st.link_button(
-            f"🔍 Voir l'annonce sur AutoScout24 (Page {target_page})",
-            fallback_url,
-        )
-
-      st.markdown("---")
-
-      statuts_possibles = [
-          "Nouveau",
-          "Appelé - Répondeur",
-          "À relancer",
-          "RDV / Intéressé",
-          "Pas intéressé / Vendu",
-      ]
-      current_statut = (
-          str(row_data["Statut"])
-          if str(row_data["Statut"]) in statuts_possibles
-          else "Nouveau"
+      fallback_url = (
+          "https://www.autoscout24.be/fr/lst?q="
+          + safe_query
+          + price_filter
+          + "&page="
+          + str(target_page)
+          + "&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
+          "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=8930%20Menen&lat=50.79669&lon=3.11693"
+      )
+      st.link_button(
+          f"🔍 Voir l'annonce sur AutoScout24 (Page {target_page})",
+          fallback_url,
       )
 
-      nouveau_statut = st.selectbox(
-          "Statut de l'appel",
-          statuts_possibles,
-          index=statuts_possibles.index(current_statut),
-      )
+    st.markdown("---")
 
-      current_comment = (
-          str(row_data["Commentaires"])
-          if pd.notna(row_data["Commentaires"])
-          else ""
-      )
-      nouveau_commentaire = st.text_area(
-          "Commentaire d'appel", value=current_comment
-      )
+    statuts_possibles = [
+        "Nouveau",
+        "Appelé - Répondeur",
+        "À relancer",
+        "RDV / Intéressé",
+        "Pas intéressé / Vendu",
+    ]
+    current_statut = (
+        str(row_data["Statut"])
+        if str(row_data["Statut"]) in statuts_possibles
+        else "Nouveau"
+    )
 
-      if st.button("💾 Enregistrer les modifications"):
-        df.loc[df["ID"] == selected_id, "Statut"] = str(nouveau_statut)
-        df.loc[df["ID"] == selected_id, "Commentaires"] = str(
-            nouveau_commentaire
-        )
+    nouveau_statut = st.selectbox(
+        "Statut de l'appel",
+        statuts_possibles,
+        index=statuts_possibles.index(current_statut),
+    )
 
-        worksheet.clear()
-        lignes_maj = [df.columns.values.tolist()] + df.values.tolist()
-        worksheet.update(lignes_maj)
+    current_comment = (
+        str(row_data["Commentaires"])
+        if pd.notna(row_data["Commentaires"])
+        else ""
+    )
+    nouveau_commentaire = st.text_area(
+        "Commentaire d'appel", value=current_comment
+    )
 
-        st.success("Modifications enregistrées et synchronisées en temps réel !")
-        st.rerun()
+    if st.button("💾 Enregistrer les modifications"):
+      df.loc[df["ID"] == selected_id, "Statut"] = str(nouveau_statut)
+      df.loc[df["ID"] == selected_id, "Commentaires"] = str(nouveau_commentaire)
+
+      worksheet.clear()
+      lignes_maj = [df.columns.values.tolist()] + df.values.tolist()
+      worksheet.update(lignes_maj)
+
+      st.success("Modifications enregistrées et synchronisées en temps réel !")
+      st.rerun()
