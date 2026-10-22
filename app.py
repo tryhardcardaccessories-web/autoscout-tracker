@@ -1,4 +1,6 @@
+import json
 import os
+import re
 import subprocess
 import urllib.parse
 from google.oauth2 import service_account
@@ -11,26 +13,35 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets ultra-robuste (gère st.secrets et le fichier local)
+# Connexion Google Sheets avec nettoyage radical et absolu de la clé (éradication des points parasites)
 @st.cache_resource
 def get_google_sheet():
   try:
     if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-      # Récupération depuis les secrets Streamlit Cloud
       creds_dict = dict(st.secrets["gcp_service_account"])
     else:
-      # Récupération depuis le fichier local
-      import json
-
       json_path = ".streamlit/secret.json"
       with open(json_path, "r", encoding="utf-8") as f:
         creds_dict = json.load(f)
 
-    # Nettoyage impératif de la clé privée pour forcer de vrais sauts de ligne
     if "private_key" in creds_dict:
       pk = str(creds_dict["private_key"])
-      pk = pk.replace("\\\\n", "\n").replace("\\n", "\n")
-      creds_dict["private_key"] = pk
+      # Éradication totale de tout caractère invalide (points, espaces, sauts de ligne corrompus)
+      clean_body = re.sub(
+          r"[^A-Za-z0-9+/=]",
+          "",
+          pk.replace("-----BEGIN PRIVATE KEY-----", "")
+          .replace("-----END PRIVATE KEY-----", "")
+          .replace("\\n", "")
+          .replace("\n", ""),
+      )
+      # Reconstruction parfaite aux normes PEM (blocs de 64 caractères stricts)
+      chunks = [clean_body[i : i + 64] for i in range(0, len(clean_body), 64)]
+      creds_dict["private_key"] = (
+          "-----BEGIN PRIVATE KEY-----\n"
+          + "\n".join(chunks)
+          + "\n-----END PRIVATE KEY-----\n"
+      )
 
     creds = service_account.Credentials.from_service_account_info(
         creds_dict,
