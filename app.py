@@ -90,11 +90,14 @@ def run_scraper_integrated(worksheet, max_pages=2):
       )
   )
 
+  # Sécurisation des ID existants pour qu'ils ne changent jamais
   if "ID" in db_df.columns and not db_df.empty:
     db_df["ID"] = (
         pd.to_numeric(db_df["ID"], errors="coerce").fillna(0).astype(int)
     )
-    current_max_id = db_df["ID"].max()
+    current_max_id = (
+        db_df["ID"].max() if not db_df["ID"].empty and db_df["ID"].max() > 0 else 0
+    )
   else:
     current_max_id = 0
 
@@ -204,13 +207,16 @@ def run_scraper_integrated(worksheet, max_pages=2):
     scraped_df["Key"] = (
         scraped_df["Titre"].astype(str) + "_" + scraped_df["Prix"].astype(str)
     )
-    db_df["Key"] = (
-        db_df["Titre"].astype(str) + "_" + db_df["Prix"].astype(str)
-        if not db_df.empty
-        else ""
-    )
+    if not db_df.empty and "Key" in db_df.columns:
+      pass
+    elif not db_df.empty:
+      db_df["Key"] = (
+          db_df["Titre"].astype(str) + "_" + db_df["Prix"].astype(str)
+      )
+    else:
+      db_df["Key"] = pd.Series(dtype="str")
 
-    existing_keys = set(db_df["Key"].tolist())
+    existing_keys = set(db_df["Key"].tolist()) if not db_df.empty else set()
     new_entries = []
 
     for _, row in scraped_df.iterrows():
@@ -231,6 +237,7 @@ def run_scraper_integrated(worksheet, max_pages=2):
             "Key": row["Key"],
         })
       else:
+        # Met à jour la page si le véhicule est toujours là, mais sans toucher à l'ID existant
         db_df.loc[db_df["Key"] == row["Key"], "Page"] = row["Page"]
 
     scraped_keys = set(scraped_df["Key"].tolist())
@@ -445,7 +452,7 @@ else:
         worksheet.clear()
         lignes_maj = [df.columns.values.tolist()] + df.values.tolist()
         worksheet.update(lignes_maj)
-        st.cache_data.clear()  # Efface le cache pour forcer la mise à jour immédiate
+        st.cache_data.clear()
 
         st.success("Modifications enregistrées et synchronisées en temps réel !")
         st.rerun()
