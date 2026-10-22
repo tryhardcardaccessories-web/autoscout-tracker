@@ -58,7 +58,7 @@ st.markdown(
 BASE_URL = "https://www.autoscout24.be/fr/lst?fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=8930%20Menen&lat=50.79669&lon=3.11693"
 
 
-def run_scraper_integrated(max_pages=5):
+def run_scraper_integrated(max_pages=2):
   headers = {
       "User-Agent": (
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
@@ -110,11 +110,15 @@ def run_scraper_integrated(max_pages=5):
     db_df["Page"] = 1
 
   scraped_items = []
+  progres_bar = st.progress(0)
+  status_text = st.empty()
 
   for page in range(1, max_pages + 1):
+    status_text.text(f"Scraping de la page {page} sur {max_pages}...")
+    progres_bar.progress(page / max_pages)
     page_url = f"{BASE_URL}&page={page}"
     try:
-      response = requests.get(page_url, headers=headers)
+      response = requests.get(page_url, headers=headers, timeout=10)
       if response.status_code != 200:
         break
       soup = BeautifulSoup(response.text, "html.parser")
@@ -204,6 +208,7 @@ def run_scraper_integrated(max_pages=5):
     except Exception:
       break
 
+  status_text.text("Mise à jour du Google Sheet en cours...")
   scraped_df = pd.DataFrame(scraped_items)
 
   if not scraped_df.empty:
@@ -259,30 +264,23 @@ def run_scraper_integrated(max_pages=5):
         [final_df.columns.values.tolist()] + final_df.values.tolist()
     )
 
+  progres_bar.empty()
+  status_text.empty()
+
 
 # --- BOUTON DE LANCEMENT DU SCRAPER ---
 st.markdown("---")
 col_sync1, col_sync2 = st.columns([1, 3])
 with col_sync1:
   if st.button("🔄 Lancer le Scraper (Mise à jour)"):
-    with st.status(
-        "🚀 Scraping d'AutoScout24 en cours...", expanded=True
-    ) as status:
-      st.write("Connexion au site et récupération des annonces...")
+    with st.spinner("🚀 Scraping et synchronisation en cours..."):
       try:
-        run_scraper_integrated(max_pages=5)
-        status.update(
-            label="✨ Mise à jour terminée avec succès !",
-            state="complete",
-            expanded=False,
-        )
-        st.success(
-            "Toutes les données ont été synchronisées avec Google Sheets !"
-        )
+        # Limité à 2 pages pour éviter le blocage du serveur cloud
+        run_scraper_integrated(max_pages=2)
+        st.success("✨ Mise à jour terminée avec succès !")
         st.rerun()
       except Exception as e:
-        status.update(label="❌ Erreur lors du scraping", state="error")
-        st.error(f"Détails de l'erreur : {e}")
+        st.error(f"Erreur lors du scraping : {e}")
 with col_sync2:
   st.markdown(
       "<br>Cliquez ici pour synchroniser les dernières annonces en direct"
@@ -424,7 +422,6 @@ else:
       nouveau_statut = st.selectbox(
           "Statut de l'appel",
           statuts_possibles,
-          index=statuts_possibles.index(current_statut),
       )
 
       current_comment = (
