@@ -1,35 +1,30 @@
-import streamlit as st
-
-st.set_page_config(
-    page_title="AutoScout Tracker", page_icon="🚗", layout="wide"
-)
-
 import json
 import os
 import subprocess
 import urllib.parse
 import gspread
 import pandas as pd
+import streamlit as st
+
+st.set_page_config(
+    page_title="AutoScout Tracker", page_icon="🚗", layout="wide"
+)
 
 
-# Connexion Google Sheets robuste via un fichier JSON temporaire généré depuis st.secrets
+# Connexion Google Sheets directe et native via st.secrets
 @st.cache_resource
 def get_google_sheet():
-  # On récupère le dictionnaire des secrets configurés sur Streamlit Cloud
-  secrets_dict = dict(st.secrets["gcp_service_account"])
+  # Récupération des identifiants stockés dans les secrets Streamlit Cloud
+  service_account_info = dict(st.secrets["gcp_service_account"])
 
-  # On s'assure que les retours à la ligne de la clé privée sont correctement interprétés
-  if "private_key" in secrets_dict:
-    key = secrets_dict["private_key"]
-    key = key.replace("\\\\n", "\n").replace("\\n", "\n")
-    secrets_dict["private_key"] = key
+  # Correction dynamique des retours à la ligne de la clé privée PEM
+  if "private_key" in service_account_info:
+    private_key = service_account_info["private_key"]
+    private_key = private_key.replace("\\n", "\n")
+    service_account_info["private_key"] = private_key
 
-  # On écrit un vrai fichier temp_secret.json propre sur le serveur en ligne
-  with open("temp_secret.json", "w") as f:
-    json.dump(secrets_dict, f)
-
-  # gspread lit ce fichier temporaire sans aucune erreur cryptographique PEM
-  gc = gspread.service_account(filename="temp_secret.json")
+  # Connexion directe en mémoire sans fichier temporaire
+  gc = gspread.service_account_from_dict(service_account_info)
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
 
