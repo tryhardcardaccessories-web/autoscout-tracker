@@ -49,11 +49,12 @@ def get_google_sheet():
 
 st.title("🚗 AutoScout Tracker - CRM Particuliers")
 st.markdown(
-    "**Zone :** Menen (20 km) | **Filtre :** Particuliers, $\ge$ 2005, $\le$ 200k"
-    " km"
+    "**Zone :** Frontière Belge (20 km autour de Roncq) | **Filtre :**"
+    " Particuliers, $\ge$ 2005, $\le$ 200k km"
 )
 
-BASE_URL = "https://www.autoscout24.be/fr/lst?fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=8930%20Menen&lat=50.79669&lon=3.11693"
+# URL configurée pour ne cibler QUE la Belgique (cy=B) dans le rayon de 20 km autour de Roncq
+BASE_URL = "https://www.autoscout24.be/fr/lst?fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
 
 
 def run_scraper_integrated(worksheet, max_pages=2):
@@ -192,7 +193,7 @@ def run_scraper_integrated(worksheet, max_pages=2):
               "Année": annee,
               "KM": km,
               "Prix": prix,
-              "Ville": "Menen et environs",
+              "Ville": "Belgique (Zone frontalière)",
               "Téléphone": "Voir sur l'annonce",
               "Lien": lien,
               "Page": page,
@@ -237,7 +238,6 @@ def run_scraper_integrated(worksheet, max_pages=2):
             "Key": row["Key"],
         })
       else:
-        # Met à jour la page si le véhicule est toujours là, mais sans toucher à l'ID existant
         db_df.loc[db_df["Key"] == row["Key"], "Page"] = row["Page"]
 
     scraped_keys = set(scraped_df["Key"].tolist())
@@ -406,7 +406,7 @@ else:
             + "&page="
             + str(target_page)
             + "&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
-            "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=8930%20Menen&lat=50.79669&lon=3.11693"
+            "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
         )
         st.link_button(
             f"🔍 Voir l'annonce sur AutoScout24 (Page {target_page})",
