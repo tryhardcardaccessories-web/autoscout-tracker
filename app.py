@@ -1,6 +1,4 @@
-import json
 import os
-import re
 import subprocess
 import urllib.parse
 from google.oauth2 import service_account
@@ -13,35 +11,23 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets avec nettoyage radical et absolu de la clé (éradication des points parasites)
+# Connexion Google Sheets robuste via st.secrets (Cloud) ou le fichier local
 @st.cache_resource
 def get_google_sheet():
   try:
     if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
       creds_dict = dict(st.secrets["gcp_service_account"])
     else:
+      import json
+
       json_path = ".streamlit/secret.json"
       with open(json_path, "r", encoding="utf-8") as f:
         creds_dict = json.load(f)
 
     if "private_key" in creds_dict:
       pk = str(creds_dict["private_key"])
-      # Éradication totale de tout caractère invalide (points, espaces, sauts de ligne corrompus)
-      clean_body = re.sub(
-          r"[^A-Za-z0-9+/=]",
-          "",
-          pk.replace("-----BEGIN PRIVATE KEY-----", "")
-          .replace("-----END PRIVATE KEY-----", "")
-          .replace("\\n", "")
-          .replace("\n", ""),
-      )
-      # Reconstruction parfaite aux normes PEM (blocs de 64 caractères stricts)
-      chunks = [clean_body[i : i + 64] for i in range(0, len(clean_body), 64)]
-      creds_dict["private_key"] = (
-          "-----BEGIN PRIVATE KEY-----\n"
-          + "\n".join(chunks)
-          + "\n-----END PRIVATE KEY-----\n"
-      )
+      pk = pk.replace("\\\\n", "\n").replace("\\n", "\n")
+      creds_dict["private_key"] = pk
 
     creds = service_account.Credentials.from_service_account_info(
         creds_dict,
@@ -51,7 +37,10 @@ def get_google_sheet():
         ],
     )
     gc = gspread.authorize(creds)
-    sh = gc.open("AUTOSCOUT24")
+
+    # Ouverture directe de ton Google Sheet via son ID exact
+    sheet_id = "1uMm1bqAnVb7Qro8biw7xX6NT4QdURD5ILOQy3CwGy_4"
+    sh = gc.open_by_key(sheet_id)
     return sh.get_worksheet(0)
   except Exception as e:
     st.error(f"Erreur critique de connexion Google Sheets : {e}")
