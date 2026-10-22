@@ -1,22 +1,29 @@
 import os
 import time
-from bs4import BeautifulSoup
+from bs4 import BeautifulSoup
 import gspread
 import pandas as pd
 import requests
-import streamlit as st  # Utilisé pour récupérer les secrets si besoin
+import streamlit as st
 
-# Configuration Google Sheets (Compatible local via secret.json et Cloud via st.secrets)
+# Configuration Google Sheets avec nettoyage robuste de la clé PEM
 try:
   if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
     creds_dict = dict(st.secrets["gcp_service_account"])
+    if "private_key" in creds_dict:
+      creds_dict["private_key"] = (
+          str(creds_dict["private_key"])
+          .replace("\\\\n", "\n")
+          .replace("\\n", "\n")
+      )
     gc = gspread.service_account_from_dict(creds_dict)
   else:
     dossier_actuel = os.path.dirname(os.path.abspath(__file__))
     chemin_json = os.path.join(dossier_actuel, "secret.json")
     gc = gspread.service_account(filename=chemin_json)
 
-  sh = gc.open("AUTOSCOUT24")
+  sheet_id = "1uMm1bqAnVb7Qro8biw7xX6NT4QdURD5ILOQy3CwGy_4"
+  sh = gc.open_by_key(sheet_id)
   worksheet = sh.get_worksheet(0)
 except Exception as e:
   print(f"[ERREUR] Impossible de se connecter à Google Sheets : {e}")
@@ -34,7 +41,6 @@ def run_scraper(max_pages=1000):
       "Accept-Language": "fr-FR,fr;q=0.9",
   }
 
-  # Récupération des données actuelles depuis Google Sheets
   try:
     data = worksheet.get_all_records()
   except Exception:
@@ -59,7 +65,6 @@ def run_scraper(max_pages=1000):
         ]
     )
 
-  # Sécurisation des types et colonnes
   if "ID" in db_df.columns and not db_df.empty:
     db_df["ID"] = (
         pd.to_numeric(db_df["ID"], errors="coerce").fillna(0).astype(int)
@@ -252,7 +257,6 @@ def run_scraper(max_pages=1000):
 
     final_df = final_df.drop(columns=["Key"], errors="ignore")
 
-    # Sauvegarde directe dans Google Sheets
     worksheet.clear()
     worksheet.update(
         [final_df.columns.values.tolist()] + final_df.values.tolist()
