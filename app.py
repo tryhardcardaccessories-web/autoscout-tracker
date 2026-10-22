@@ -12,27 +12,21 @@ import gspread
 import pandas as pd
 
 
-# Connexion sécurisée Google Sheets via un fichier temporaire virtuel nettoyé
+# Connexion Google Sheets exclusive pour Streamlit Cloud via st.secrets
 @st.cache_resource
 def get_google_sheet():
-  if "gcp_service_account" in st.secrets:
-    secrets_dict = dict(st.secrets["gcp_service_account"])
+  secrets_dict = dict(st.secrets["gcp_service_account"])
+  if "private_key" in secrets_dict:
+    key = secrets_dict["private_key"]
+    # Nettoyage robuste des sauts de ligne pour éviter l'erreur PEM
+    key = key.replace("\\n", "\n").replace("\\\\n", "\n")
+    secrets_dict["private_key"] = key
 
-    if "private_key" in secrets_dict:
-      key = secrets_dict["private_key"]
-      # Nettoyage ultra-robuste pour convertir les \n textuels en vrais sauts de ligne
-      key = key.replace("\\\\n", "\n").replace("\\n", "\n")
-      secrets_dict["private_key"] = key
+  # Création d'un fichier temporaire propre lu par gspread
+  with open("temp_secret.json", "w") as f:
+    json.dump(secrets_dict, f)
 
-    with open("temp_secret.json", "w", encoding="utf-8") as f:
-      json.dump(secrets_dict, f)
-
-    gc = gspread.service_account(filename="temp_secret.json")
-  else:
-    dossier_actuel = os.path.dirname(os.path.abspath(__file__))
-    chemin_json = os.path.join(dossier_actuel, "secret.json")
-    gc = gspread.service_account(filename=chemin_json)
-
+  gc = gspread.service_account(filename="temp_secret.json")
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
 
