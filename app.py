@@ -3,7 +3,6 @@ import os
 import re
 import subprocess
 import urllib.parse
-from google.auth.crypt import rsa
 import gspread
 import pandas as pd
 import streamlit as st
@@ -13,7 +12,7 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets en interceptant et nettoyant la clé en mémoire
+# Connexion Google Sheets en nettoyant à la source le texte de la clé
 @st.cache_resource
 def get_google_sheet():
   json_path = ".streamlit/secret.json"
@@ -21,26 +20,24 @@ def get_google_sheet():
   with open(json_path, "r", encoding="utf-8") as f:
     creds_dict = json.load(f)
 
+  # On récupère la clé brute et on extrait uniquement le contenu valide de la clé Base64
   if "private_key" in creds_dict:
     pk = str(creds_dict["private_key"])
-    pk_clean = (
+    # On enlève tout le superflu, les retours chariot et les caractères parasites
+    clean_chars = re.sub(
+        r"[^A-Za-z0-9+/=]",
+        "",
         pk.replace("-----BEGIN PRIVATE KEY-----", "")
-        .replace("-----END PRIVATE KEY-----", "")
-        .replace("\\n", "\n")
-        .replace("\\\\n", "\n")
+        .replace("-----END PRIVATE KEY-----", ""),
     )
-    # Suppression totale de tout caractère parasite (points, espaces, etc.)
-    body = re.sub(r"[^A-Za-z0-9+/=]", "", pk_clean)
-
-    # Reconstruction exacte au format PEM standard
-    chunks = [body[i : i + 64] for i in range(0, len(body), 64)]
+    # On reconstruit une clé PEM parfaite aux normes cryptographiques strictes
+    chunks = [clean_chars[i : i + 64] for i in range(0, len(clean_chars), 64)]
     creds_dict["private_key"] = (
         "-----BEGIN PRIVATE KEY-----\n"
         + "\n".join(chunks)
         + "\n-----END PRIVATE KEY-----\n"
     )
 
-  # Connexion directe par dictionnaire nettoyé
   gc = gspread.service_account_from_dict(creds_dict)
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
