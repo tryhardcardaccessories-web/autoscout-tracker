@@ -2,16 +2,31 @@ import json
 import os
 import subprocess
 import urllib.parse
+from cryptography.hazmat.primitives import serialization
 import gspread
 import pandas as pd
 import streamlit as st
+
+# --- PATCH MAGIQUE POUR PYTHON & CRYPTOGRAPHY ---
+# Force la conversion de la clé en bytes si elle arrive sous forme de texte
+_original_load_pem = serialization.load_pem_private_key
+
+
+def _patched_load_pem(data, password, backend=None, **kwargs):
+  if isinstance(data, str):
+    data = data.encode("utf-8")
+  return _original_load_pem(data, password=password, backend=backend, **kwargs)
+
+
+serialization.load_pem_private_key = _patched_load_pem
+# -----------------------------------------------
 
 st.set_page_config(
     page_title="AutoScout Tracker", page_icon="🚗", layout="wide"
 )
 
 
-# Connexion Google Sheets avec reconstruction chirurgicale de la clé PEM
+# Connexion Google Sheets ultra-robuste
 @st.cache_resource
 def get_google_sheet():
   json_path = ".streamlit/secret.json"
@@ -19,10 +34,9 @@ def get_google_sheet():
   with open(json_path, "r", encoding="utf-8") as f:
     creds_dict = json.load(f)
 
-  # Reconstruction totale et blindée de la clé privée PEM
+  # Nettoyage et reformatage propre de la clé privée
   if "private_key" in creds_dict:
     pk = creds_dict["private_key"]
-    # On nettoie tout (retours à la ligne littéraux, espaces, etc.)
     body = (
         pk.replace("-----BEGIN PRIVATE KEY-----", "")
         .replace("-----END PRIVATE KEY-----", "")
@@ -31,16 +45,13 @@ def get_google_sheet():
         .replace("\n", "")
         .replace(" ", "")
     )
-    # On découpe proprement en blocs de 64 caractères (standard PEM)
     chunks = [body[i : i + 64] for i in range(0, len(body), 64)]
-    # On réassemble avec de vrais sauts de ligne garantis
     creds_dict["private_key"] = (
         "-----BEGIN PRIVATE KEY-----\n"
         + "\n".join(chunks)
         + "\n-----END PRIVATE KEY-----\n"
     )
 
-  # Connexion propre via gspread
   gc = gspread.service_account_from_dict(creds_dict)
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
