@@ -1,4 +1,3 @@
-import json
 import os
 import urllib.parse
 from bs4 import BeautifulSoup
@@ -22,6 +21,8 @@ def get_google_sheet():
     if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
       creds_dict = dict(st.secrets["gcp_service_account"])
     else:
+      import json
+
       json_path = ".streamlit/secret.json"
       with open(json_path, "r", encoding="utf-8") as f:
         creds_dict = json.load(f)
@@ -56,7 +57,7 @@ st.markdown(
 BASE_URL = "https://www.autoscout24.be/fr/lst?fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
 
 
-def run_scraper_integrated(worksheet, max_pages=30):
+def run_scraper_integrated(worksheet, max_pages=2):
   headers = {
       "User-Agent": (
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
@@ -90,7 +91,7 @@ def run_scraper_integrated(worksheet, max_pages=30):
       )
   )
 
-  # Sécurisation des ID existants
+  # Sécurisation des ID existants pour qu'ils ne changent jamais
   if "ID" in db_df.columns and not db_df.empty:
     db_df["ID"] = (
         pd.to_numeric(db_df["ID"], errors="coerce").fillna(0).astype(int)
@@ -241,15 +242,13 @@ def run_scraper_integrated(worksheet, max_pages=30):
 
     scraped_keys = set(scraped_df["Key"].tolist())
     if not db_df.empty:
-      sold_mask = (
-          (~db_df["Key"].isin(scraped_keys))
-          & (db_df["Statut"] == "Nouveau")
-          & (pd.to_numeric(db_df["Page"], errors="coerce").fillna(1) <= max_pages)
+      sold_mask = (~db_df["Key"].isin(scraped_keys)) & (
+          db_df["Statut"] == "Nouveau"
       )
       db_df.loc[sold_mask, "Statut"] = "Pas intéressé / Vendu"
 
     final_df = (
-        pd.concat([db_df, pd.DataFrame(new_entries)], ignore_ignore=True)
+        pd.concat([db_df, pd.DataFrame(new_entries)], ignore_index=True)
         if new_entries
         else db_df
     )
@@ -277,18 +276,18 @@ if worksheet is None:
 st.markdown("---")
 col_sync1, col_sync2 = st.columns([1, 3])
 with col_sync1:
-  if st.button("🔄 Lancer le Scraper (30 Pages)"):
+  if st.button("🔄 Lancer le Scraper (Mise à jour)"):
     with st.spinner("🚀 Scraping et synchronisation en cours..."):
       try:
-        run_scraper_integrated(worksheet, max_pages=30)
+        run_scraper_integrated(worksheet, max_pages=2)
         st.success("✨ Mise à jour terminée avec succès !")
         st.rerun()
       except Exception as e:
         st.error(f"Erreur lors du scraping : {e}")
 with col_sync2:
   st.markdown(
-      "<br>Cliquez ici pour synchroniser les 30 premières pages d'annonces"
-      " dans le Google Sheet.",
+      "<br>Cliquez ici pour synchroniser les dernières annonces en direct"
+      " dans le Google Sheet partagé.",
       unsafe_allow_html=True,
   )
 st.markdown("---")
