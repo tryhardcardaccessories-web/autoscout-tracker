@@ -11,19 +11,32 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets directe et native via st.secrets
+# Connexion Google Sheets blindée contre les erreurs de clé privée
 @st.cache_resource
 def get_google_sheet():
-  # Récupération des identifiants stockés dans les secrets Streamlit Cloud
   service_account_info = dict(st.secrets["gcp_service_account"])
 
-  # Correction dynamique des retours à la ligne de la clé privée PEM
+  # Nettoyage ultra-robuste de la clé privée PEM
   if "private_key" in service_account_info:
-    private_key = service_account_info["private_key"]
-    private_key = private_key.replace("\\n", "\n")
-    service_account_info["private_key"] = private_key
+    pk = service_account_info["private_key"]
+    # Remplace les \n littéraux par de vrais retours à la ligne
+    pk = pk.replace("\\n", "\n")
+    # S'assure que les balises de début et de fin ont bien leurs sauts de ligne propres
+    if "-----BEGIN PRIVATE KEY-----" in pk and not pk.startswith(
+        "-----BEGIN PRIVATE KEY-----\n"
+    ):
+      pk = pk.replace(
+          "-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----\n"
+      )
+    if "-----END PRIVATE KEY-----" in pk and not pk.endswith(
+        "\n-----END PRIVATE KEY-----"
+    ):
+      pk = pk.replace(
+          "-----END PRIVATE KEY-----", "\n-----END PRIVATE KEY-----"
+      )
+    service_account_info["private_key"] = pk
 
-  # Connexion directe en mémoire sans fichier temporaire
+  # Connexion directe en mémoire
   gc = gspread.service_account_from_dict(service_account_info)
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
