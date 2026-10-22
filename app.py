@@ -1,4 +1,3 @@
-import json
 import os
 import subprocess
 import urllib.parse
@@ -12,19 +11,30 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets via un chargement direct de l'objet d'identification Google
+# Connexion Google Sheets hybride : compatible st.secrets (Cloud) et secret.json (Local)
 @st.cache_resource
 def get_google_sheet():
-  json_path = ".streamlit/secret.json"
+  if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
+    # Mode Cloud : Utilisation des secrets Streamlit
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = service_account.Credentials.from_service_account_info(
+        creds_dict,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ],
+    )
+  else:
+    # Mode Local : Utilisation du fichier physique
+    json_path = ".streamlit/secret.json"
+    creds = service_account.Credentials.from_service_account_file(
+        json_path,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ],
+    )
 
-  # Utilisation directe de l'objet Credentials de Google qui gère nativement le fichier
-  creds = service_account.Credentials.from_service_account_file(
-      json_path,
-      scopes=[
-          "https://www.googleapis.com/auth/spreadsheets",
-          "https://www.googleapis.com/auth/drive",
-      ],
-  )
   gc = gspread.authorize(creds)
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
