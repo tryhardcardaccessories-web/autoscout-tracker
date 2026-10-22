@@ -1,8 +1,8 @@
 import json
 import os
-import re
 import subprocess
 import urllib.parse
+from google.oauth2 import service_account
 import gspread
 import pandas as pd
 import streamlit as st
@@ -12,34 +12,20 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets avec nettoyage radical anti-caractères parasites
+# Connexion Google Sheets via un chargement direct de l'objet d'identification Google
 @st.cache_resource
 def get_google_sheet():
   json_path = ".streamlit/secret.json"
 
-  with open(json_path, "r", encoding="utf-8") as f:
-    creds_dict = json.load(f)
-
-  if "private_key" in creds_dict:
-    pk = str(creds_dict["private_key"])
-    pk_clean = (
-        pk.replace("-----BEGIN PRIVATE KEY-----", "")
-        .replace("-----END PRIVATE KEY-----", "")
-        .replace("\\n", "\n")
-        .replace("\\\\n", "\n")
-    )
-
-    # Suppression totale de tout caractère non valide (y compris les points parasites)
-    body = re.sub(r"[^A-Za-z0-9+/=]", "", pk_clean)
-
-    chunks = [body[i : i + 64] for i in range(0, len(body), 64)]
-    creds_dict["private_key"] = (
-        "-----BEGIN PRIVATE KEY-----\n"
-        + "\n".join(chunks)
-        + "\n-----END PRIVATE KEY-----\n"
-    )
-
-  gc = gspread.service_account_from_dict(creds_dict)
+  # Utilisation directe de l'objet Credentials de Google qui gère nativement le fichier
+  creds = service_account.Credentials.from_service_account_file(
+      json_path,
+      scopes=[
+          "https://www.googleapis.com/auth/spreadsheets",
+          "https://www.googleapis.com/auth/drive",
+      ],
+  )
+  gc = gspread.authorize(creds)
   sh = gc.open("AUTOSCOUT24")
   return sh.get_worksheet(0)
 
