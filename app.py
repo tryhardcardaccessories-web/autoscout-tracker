@@ -20,7 +20,8 @@ def get_google_sheet():
 
     if "private_key" in secrets_dict:
       key = secrets_dict["private_key"]
-      key = key.replace("\\n", "\n")
+      # Nettoyage ultra-robuste pour convertir les \n textuels en vrais sauts de ligne
+      key = key.replace("\\\\n", "\n").replace("\\n", "\n")
       secrets_dict["private_key"] = key
 
     with open("temp_secret.json", "w", encoding="utf-8") as f:
