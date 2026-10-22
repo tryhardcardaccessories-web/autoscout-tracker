@@ -11,12 +11,23 @@ st.set_page_config(
 )
 
 
-# Connexion Google Sheets hybride : compatible st.secrets (Cloud) et secret.json (Local)
+# Connexion Google Sheets avec nettoyage automatique et sécurisé du format PEM
 @st.cache_resource
 def get_google_sheet():
   if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-    # Mode Cloud : Utilisation des secrets Streamlit
     creds_dict = dict(st.secrets["gcp_service_account"])
+
+    # Nettoyage et normalisation de la clé privée pour éviter tout plantage cryptographique
+    if "private_key" in creds_dict:
+      pk = str(creds_dict["private_key"])
+      # Remplace les \n littéraux par de vrais retours à la ligne
+      pk = pk.replace("\\n", "\n")
+      if not pk.startswith("-----BEGIN PRIVATE KEY-----"):
+        pk = "-----BEGIN PRIVATE KEY-----\n" + pk
+      if not pk.endswith("-----END PRIVATE KEY-----"):
+        pk = pk + "\n-----END PRIVATE KEY-----"
+      creds_dict["private_key"] = pk
+
     creds = service_account.Credentials.from_service_account_info(
         creds_dict,
         scopes=[
@@ -25,7 +36,6 @@ def get_google_sheet():
         ],
     )
   else:
-    # Mode Local : Utilisation du fichier physique
     json_path = ".streamlit/secret.json"
     creds = service_account.Credentials.from_service_account_file(
         json_path,
