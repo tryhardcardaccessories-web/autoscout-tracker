@@ -1,3 +1,4 @@
+import json
 import os
 import urllib.parse
 from bs4 import BeautifulSoup
@@ -14,22 +15,25 @@ st.set_page_config(
 SHEET_ID = "1uMm1bqAnVb7Qro8biw7xX6NT4QdURD5ILOQy3CwGy_4"
 
 
-# Connexion Google Sheets hautement optimisée avec mise en cache
+# Connexion Google Sheets hautement optimisée avec nettoyage PEM sécurisé
 @st.cache_resource
 def get_google_sheet():
   try:
     if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
       creds_dict = dict(st.secrets["gcp_service_account"])
     else:
-      import json
-
       json_path = ".streamlit/secret.json"
       with open(json_path, "r", encoding="utf-8") as f:
         creds_dict = json.load(f)
 
+    # Nettoyage et formatage strict de la clé privée PEM pour éviter l'erreur "Invalid symbol 46"
     if "private_key" in creds_dict:
       pk = str(creds_dict["private_key"])
-      pk = pk.replace("\\\\n", "\n").replace("\\n", "\n")
+      pk = pk.replace("\\n", "\n").replace("\\\\n", "\n")
+      if "-----BEGIN PRIVATE KEY-----" in pk and "\n" not in pk:
+        pk = pk.replace(
+            "-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----\n"
+        ).replace("-----END PRIVATE KEY-----", "\n-----END PRIVATE KEY-----")
       creds_dict["private_key"] = pk
 
     creds = service_account.Credentials.from_service_account_info(
@@ -53,11 +57,11 @@ st.markdown(
     " Particuliers, $\ge$ 2005, $\le$ 200k km"
 )
 
-# URL configurée pour ne cibler QUE la Belgique (cy=B) dans le rayon de 20 km autour de Roncq
+# URL configurée pour ne cibler QUE la Belgique (cy=B) dans le rayon de 20 km autour de Roncq (59223)
 BASE_URL = "https://www.autoscout24.be/fr/lst?fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
 
 
-def run_scraper_integrated(worksheet, max_pages=2):
+def run_scraper_integrated(worksheet, max_pages=30):
   headers = {
       "User-Agent": (
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
@@ -242,8 +246,10 @@ def run_scraper_integrated(worksheet, max_pages=2):
 
     scraped_keys = set(scraped_df["Key"].tolist())
     if not db_df.empty:
-      sold_mask = (~db_df["Key"].isin(scraped_keys)) & (
-          db_df["Statut"] == "Nouveau"
+      sold_mask = (
+          (~db_df["Key"].isin(scraped_keys))
+          & (db_df["Statut"] == "Nouveau")
+          & (pd.to_numeric(db_df["Page"], errors="coerce").fillna(1) <= max_pages)
       )
       db_df.loc[sold_mask, "Statut"] = "Pas intéressé / Vendu"
 
@@ -276,17 +282,17 @@ if worksheet is None:
 st.markdown("---")
 col_sync1, col_sync2 = st.columns([1, 3])
 with col_sync1:
-  if st.button("🔄 Lancer le Scraper (Mise à jour)"):
+  if st.button("🔄 Lancer le Scraper (30 Pages)"):
     with st.spinner("🚀 Scraping et synchronisation en cours..."):
       try:
-        run_scraper_integrated(worksheet, max_pages=2)
+        run_scraper_integrated(worksheet, max_pages=30)
         st.success("✨ Mise à jour terminée avec succès !")
         st.rerun()
       except Exception as e:
         st.error(f"Erreur lors du scraping : {e}")
 with col_sync2:
   st.markdown(
-      "<br>Cliquez ici pour synchroniser les dernières annonces en direct"
+      "<br>Cliquez ici pour synchroniser les 30 premières pages d'annonces"
       " dans le Google Sheet partagé.",
       unsafe_allow_html=True,
   )
