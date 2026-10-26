@@ -57,5 +57,98 @@ st.markdown(
     " Particuliers, $\ge$ 2005, $\le$ 200k km"
 )
 
-# URL configurée pour ne cibler QUE la Belgique (cy=B) dans le rayon de 20 km autour de Roncq (59223)
-BASE_URL = "
+# URL configurée sur une seule ligne pour éviter toute coupure de chaîne
+BASE_URL = "https://www.autoscout24.be/fr/lst?fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
+
+
+def run_scraper_integrated(worksheet, max_pages=30):
+  headers = {
+      "User-Agent": (
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
+          " like Gecko) Chrome/122.0.0.0 Safari/537.36"
+      ),
+      "Accept-Language": "fr-FR,fr;q=0.9",
+  }
+
+  try:
+    data = worksheet.get_all_records()
+  except Exception:
+    data = []
+
+  db_df = (
+      pd.DataFrame(data)
+      if data
+      else pd.DataFrame(
+          columns=[
+              "ID",
+              "Titre",
+              "Année",
+              "KM",
+              "Prix",
+              "Ville",
+              "Téléphone",
+              "Lien",
+              "Page",
+              "Statut",
+              "Commentaires",
+          ]
+      )
+  )
+
+  # Sécurisation des ID existants
+  if "ID" in db_df.columns and not db_df.empty:
+    db_df["ID"] = (
+        pd.to_numeric(db_df["ID"], errors="coerce").fillna(0).astype(int)
+    )
+    current_max_id = (
+        db_df["ID"].max() if not db_df["ID"].empty and db_df["ID"].max() > 0 else 0
+    )
+  else:
+    current_max_id = 0
+
+  scraped_items = []
+  progres_bar = st.progress(0)
+  status_text = st.empty()
+
+  for page in range(1, max_pages + 1):
+    status_text.text(f"Scraping de la page {page} sur {max_pages}...")
+    progres_bar.progress(page / max_pages)
+    page_url = f"{BASE_URL}&page={page}"
+    try:
+      response = requests.get(page_url, headers=headers, timeout=10)
+      if response.status_code != 200:
+        break
+      soup = BeautifulSoup(response.text, "html.parser")
+      articles = soup.find_all("article")
+      if not articles:
+        break
+
+      for article in articles:
+        title_elem = article.find("h2")
+        titre = title_elem.text.strip() if title_elem else "Vehicule"
+
+        lien = ""
+        for a_tag in article.find_all("a", href=True):
+          href = a_tag["href"]
+          if "-" in href and (
+              href.startswith("/fr/")
+              or href.startswith("/offers/")
+              or href.startswith("/offres/")
+          ):
+            lien = href
+            break
+        if not lien:
+          for a_tag in article.find_all("a", href=True):
+            href = a_tag["href"]
+            if len(href) > 10 and "javascript" not in href:
+              lien = href
+              break
+
+        if lien:
+          if lien.startswith("/"):
+            lien = f"https://www.autoscout24.be{lien}"
+          elif not lien.startswith("http"):
+            lien = f"https://www.autoscout24.be/{lien}"
+
+        full_text = article.get_text(separator=" | ")
+        prix = "N/C"
