@@ -239,16 +239,16 @@ def run_scraper_integrated(worksheet, max_pages=30):
     existing_keys = set(db_df["Key"].tolist()) if not db_df.empty else set()
     new_entries = []
 
-    # Dictionnaire de correspondance Clé -> Nouvelle Page détectée
+    # Dictionnaire Clé -> Nouvelle Page détectée
     scraped_page_map = dict(zip(scraped_df["Key"], scraped_df["Page"]))
 
-    # 1. Mise à jour forcée du numéro de Page pour les annonces déjà existantes
+    # 1. Mise à jour de la page si l'annonce est réaperçue
     if not db_df.empty:
       for key, new_page in scraped_page_map.items():
         if key in existing_keys:
           db_df.loc[db_df["Key"] == key, "Page"] = int(new_page)
 
-    # 2. Ajout des nouvelles annonces
+    # 2. Ajout des nouvelles annonces uniquement
     for _, row in scraped_df.iterrows():
       if row["Key"] not in existing_keys:
         current_max_id += 1
@@ -267,15 +267,7 @@ def run_scraper_integrated(worksheet, max_pages=30):
             "Key": row["Key"],
         })
 
-    # 3. Gestion du statut Vendu
-    scraped_keys = set(scraped_df["Key"].tolist())
-    if not db_df.empty:
-      sold_mask = (
-          (~db_df["Key"].isin(scraped_keys))
-          & (db_df["Statut"] == "Nouveau")
-          & (pd.to_numeric(db_df["Page"], errors="coerce").fillna(1) <= max_pages)
-      )
-      db_df.loc[sold_mask, "Statut"] = "Pas intéressé / Vendu"
+    # Aucune bascule automatique vers "Pas intéressé / Vendu" pour préserver 100% des prospects
 
     final_df = (
         pd.concat([db_df, pd.DataFrame(new_entries)], ignore_index=True)
@@ -325,7 +317,7 @@ with col_sync2:
 st.markdown("---")
 
 
-# Chargement en cache des données Google Sheets pour éviter les latences
+# Chargement des données Google Sheets
 @st.cache_data(ttl=60)
 def load_data_from_sheet():
   try:
@@ -420,28 +412,34 @@ else:
       else:
         raw_title = str(row_data["Titre"])
         words = raw_title.split()
-        model_query = " ".join(words[:2]) if len(words) >= 2 else raw_title
+        model_query = (
+            " ".join(words[:3]) if len(words) >= 3 else raw_title
+        )
 
         try:
-          p_val = int(str(row_data["Prix"]).replace(" ", ""))
-          price_filter = f"&pricefrom={max(0, p_val - 100)}&priceto={p_val + 100}"
+          p_val = int(
+              str(row_data["Prix"])
+              .replace(" ", "")
+              .replace("€", "")
+              .replace(".", "")
+          )
+          price_filter = (
+              f"&pricefrom={max(0, p_val - 1000)}&priceto={p_val + 1000}"
+          )
         except Exception:
           price_filter = ""
 
         safe_query = urllib.parse.quote(model_query)
-        target_page = int(row_data["Page"])
 
         fallback_url = (
             "https://www.autoscout24.be/fr/lst?q="
             + safe_query
             + price_filter
-            + "&page="
-            + str(target_page)
             + "&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
             "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
         )
         st.link_button(
-            f"🔍 Voir l'annonce sur AutoScout24 (Page {target_page})",
+            "🔍 Rechercher ce véhicule sur AutoScout24 (Toutes pages)",
             fallback_url,
         )
 
