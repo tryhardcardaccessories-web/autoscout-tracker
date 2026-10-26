@@ -250,4 +250,241 @@ def run_scraper_integrated(worksheet, max_pages=30):
 
     # 2. Ajout des nouvelles annonces
     for _, row in scraped_df.iterrows():
-      if
+      if row["Key"] not in existing_keys:
+        current_max_id += 1
+        new_entries.append({
+            "ID": current_max_id,
+            "Titre": row["Titre"],
+            "Année": row["Année"],
+            "KM": row["KM"],
+            "Prix": row["Prix"],
+            "Ville": row["Ville"],
+            "Téléphone": row["Téléphone"],
+            "Lien": row["Lien"],
+            "Page": int(row["Page"]),
+            "Statut": "Nouveau",
+            "Commentaires": "",
+            "Key": row["Key"],
+        })
+
+    # 3. Gestion du statut Vendu
+    scraped_keys = set(scraped_df["Key"].tolist())
+    if not db_df.empty:
+      sold_mask = (
+          (~db_df["Key"].isin(scraped_keys))
+          & (db_df["Statut"] == "Nouveau")
+          & (pd.to_numeric(db_df["Page"], errors="coerce").fillna(1) <= max_pages)
+      )
+      db_df.loc[sold_mask, "Statut"] = "Pas intéressé / Vendu"
+
+    final_df = (
+        pd.concat([db_df, pd.DataFrame(new_entries)], ignore_index=True)
+        if new_entries
+        else db_df
+    )
+    final_df = final_df.drop(columns=["Key"], errors="ignore")
+
+    worksheet.clear()
+    worksheet.update(
+        [final_df.columns.values.tolist()] + final_df.values.tolist()
+    )
+
+  progres_bar.empty()
+  status_text.empty()
+
+
+# Connexion sécurisée
+worksheet = get_google_sheet()
+if worksheet is None:
+  st.error(
+      "Impossible de se connecter à Google Sheets. Vérifie tes secrets dans"
+      " Streamlit."
+  )
+  st.stop()
+
+
+# --- BOUTON DE LANCEMENT DU SCRAPER ---
+st.markdown("---")
+col_sync1, col_sync2 = st.columns([1, 3])
+with col_sync1:
+  if st.button("🔄 Lancer le Scraper (30 Pages)"):
+    with st.spinner("🚀 Scraping et synchronisation en cours..."):
+      try:
+        run_scraper_integrated(worksheet, max_pages=30)
+        st.cache_data.clear()
+        st.success("✨ Mise à jour terminée avec succès !")
+        st.rerun()
+      except Exception as e:
+        st.error(f"Erreur lors du scraping : {e}")
+with col_sync2:
+  st.markdown(
+      "<br>Cliquez ici pour synchroniser les 30 premières pages d'annonces"
+      " dans le Google Sheet partagé.",
+      unsafe_allow_html=True,
+  )
+st.markdown("---")
+
+
+# Chargement en cache des données Google Sheets pour éviter les latences
+@st.cache_data(ttl=60)
+def load_data_from_sheet():
+  try:
+    data = worksheet.get_all_records()
+    return (
+        pd.DataFrame(data)
+        if data
+        else pd.DataFrame(
+            columns=[
+                "ID",
+                "Titre",
+                "Année",
+                "KM",
+                "Prix",
+                "Ville",
+                "Téléphone",
+                "Lien",
+                "Page",
+                "Statut",
+                "Commentaires",
+            ]
+        )
+    )
+  except Exception:
+    return pd.DataFrame()
+
+
+df = load_data_from_sheet()
+
+if df.empty:
+  st.warning(
+      "⚠️ La base de données est vide ou en cours de chargement. Veuillez"
+      " lancer le scraper via le bouton ci-dessus."
+  )
+else:
+  df["Page"] = (
+      pd.to_numeric(df["Page"], errors="coerce").fillna(1).astype(int)
+      if "Page" in df.columns
+      else 1
+  )
+
+  for col in ["Statut", "Commentaires", "Téléphone", "Lien", "Titre", "Ville"]:
+    if col in df.columns:
+      df[col] = (
+          df[col].fillna("").astype(str).replace("nan", "").replace("<NA>", "")
+      )
+
+  search_query = st.text_input(
+      "🔍 Rechercher dans les fiches (Modèle, Ville, Commentaire...)", ""
+  )
+  df_filtered = (
+      df[
+          df.astype(str)
+          .apply(lambda x: x.str.contains(search_query, case=False))
+          .any(axis=1)
+      ]
+      if search_query
+      else df
+  )
+
+  st.subheader("📋 Liste des annonces")
+  display_cols = [c for c in df_filtered.columns if c != "Lien"]
+  st.dataframe(df_filtered[display_cols], use_container_width=True)
+
+  if not df_filtered.empty:
+    st.markdown("---")
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+      st.subheader("✏️ Fiche Prospect Détaillée")
+      selected_id = st.selectbox(
+          "Sélectionner une fiche à consulter / modifier (par ID)",
+          df_filtered["ID"].tolist(),
+      )
+
+      row_data = df[df["ID"] == selected_id].iloc[0]
+
+      st.markdown(f"**Véhicule :** {row_data['Titre']} ({row_data['Année']})")
+      st.markdown(f"**Prix :** {row_data['Prix']} € | **KM :** {row_data['KM']} km")
+      st.markdown(f"**Ville :** {row_data['Ville']}")
+
+      has_link = (
+          "Lien" in row_data
+          and pd.notna(row_data["Lien"])
+          and str(row_data["Lien"]).startswith("http")
+      )
+
+      if has_link:
+        st.link_button(
+            "🔗 Ouvrir l'annonce exacte sur AutoScout24", row_data["Lien"]
+        )
+      else:
+        raw_title = str(row_data["Titre"])
+        words = raw_title.split()
+        model_query = " ".join(words[:2]) if len(words) >= 2 else raw_title
+
+        try:
+          p_val = int(str(row_data["Prix"]).replace(" ", ""))
+          price_filter = f"&pricefrom={max(0, p_val - 100)}&priceto={p_val + 100}"
+        except Exception:
+          price_filter = ""
+
+        safe_query = urllib.parse.quote(model_query)
+        target_page = int(row_data["Page"])
+
+        fallback_url = (
+            "https://www.autoscout24.be/fr/lst?q="
+            + safe_query
+            + price_filter
+            + "&page="
+            + str(target_page)
+            + "&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
+            "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
+        )
+        st.link_button(
+            f"🔍 Voir l'annonce sur AutoScout24 (Page {target_page})",
+            fallback_url,
+        )
+
+      st.markdown("---")
+
+      statuts_possibles = [
+          "Nouveau",
+          "Appelé - Répondeur",
+          "À relancer",
+          "RDV / Intéressé",
+          "Pas intéressé / Vendu",
+      ]
+      current_statut = (
+          str(row_data["Statut"])
+          if str(row_data["Statut"]) in statuts_possibles
+          else "Nouveau"
+      )
+
+      nouveau_statut = st.selectbox(
+          "Statut de l'appel",
+          statuts_possibles,
+          index=statuts_possibles.index(current_statut),
+      )
+
+      current_comment = (
+          str(row_data["Commentaires"])
+          if pd.notna(row_data["Commentaires"])
+          else ""
+      )
+      nouveau_commentaire = st.text_area(
+          "Commentaire d'appel", value=current_comment
+      )
+
+      if st.button("💾 Enregistrer les modifications"):
+        df.loc[df["ID"] == selected_id, "Statut"] = str(nouveau_statut)
+        df.loc[df["ID"] == selected_id, "Commentaires"] = str(
+            nouveau_commentaire
+        )
+
+        worksheet.clear()
+        lignes_maj = [df.columns.values.tolist()] + df.values.tolist()
+        worksheet.update(lignes_maj)
+        st.cache_data.clear()
+
+        st.success("Modifications enregistrées et synchronisées en temps réel !")
+        st.rerun()
