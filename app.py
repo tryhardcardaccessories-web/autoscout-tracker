@@ -117,11 +117,11 @@ def run_scraper_integrated(worksheet, max_pages=30):
     try:
       response = requests.get(page_url, headers=headers, timeout=10)
       if response.status_code != 200:
-        break
+        continue
       soup = BeautifulSoup(response.text, "html.parser")
       articles = soup.find_all("article")
       if not articles:
-        break
+        continue
 
       for article in articles:
         title_elem = article.find("h2")
@@ -152,3 +152,102 @@ def run_scraper_integrated(worksheet, max_pages=30):
 
         full_text = article.get_text(separator=" | ")
         prix = "N/C"
+        for part in full_text.split("|"):
+          part_clean = part.strip()
+          if "€" in part_clean and len(part_clean) < 15:
+            prix = (
+                part_clean.replace("€", "")
+                .replace(".", "")
+                .replace(" ", "")
+                .strip()
+            )
+            break
+
+        km = "N/C"
+        for part in full_text.split("|"):
+          part_clean = part.strip()
+          if (
+              "km" in part_clean
+              and ("/" not in part_clean)
+              and len(part_clean) < 12
+          ):
+            km = (
+                part_clean.lower()
+                .replace("km", "")
+                .replace(".", "")
+                .replace(" ", "")
+                .strip()
+            )
+            break
+
+        annee = "N/C"
+        for part in full_text.split("|"):
+          part_clean = part.strip()
+          if ("/" in part_clean and len(part_clean) <= 7) or (
+              part_clean.isdigit()
+              and len(part_clean) == 4
+              and part_clean.startswith("20")
+          ):
+            annee = part_clean.split("/")[-1]
+            break
+
+        if titre != "Vehicule":
+          scraped_items.append({
+              "Titre": titre,
+              "Année": annee,
+              "KM": km,
+              "Prix": prix,
+              "Ville": "Belgique (Zone frontalière)",
+              "Téléphone": "Voir sur l'annonce",
+              "Lien": lien,
+              "Page": page,
+          })
+    except Exception:
+      continue
+
+  status_text.text("Mise à jour du Google Sheet en cours...")
+  scraped_df = pd.DataFrame(scraped_items)
+
+  if not scraped_df.empty:
+    scraped_df["Key"] = (
+        scraped_df["Titre"].astype(str) + "_" + scraped_df["Prix"].astype(str)
+    )
+
+    if not db_df.empty:
+      if "Key" not in db_df.columns:
+        db_df["Key"] = (
+            db_df["Titre"].astype(str) + "_" + db_df["Prix"].astype(str)
+        )
+    else:
+      db_df = pd.DataFrame(
+          columns=[
+              "ID",
+              "Titre",
+              "Année",
+              "KM",
+              "Prix",
+              "Ville",
+              "Téléphone",
+              "Lien",
+              "Page",
+              "Statut",
+              "Commentaires",
+              "Key",
+          ]
+      )
+
+    existing_keys = set(db_df["Key"].tolist()) if not db_df.empty else set()
+    new_entries = []
+
+    # Dictionnaire de correspondance Clé -> Nouvelle Page détectée
+    scraped_page_map = dict(zip(scraped_df["Key"], scraped_df["Page"]))
+
+    # 1. Mise à jour forcée du numéro de Page pour les annonces déjà existantes
+    if not db_df.empty:
+      for key, new_page in scraped_page_map.items():
+        if key in existing_keys:
+          db_df.loc[db_df["Key"] == key, "Page"] = int(new_page)
+
+    # 2. Ajout des nouvelles annonces
+    for _, row in scraped_df.iterrows():
+      if
