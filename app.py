@@ -15,7 +15,6 @@ st.set_page_config(
 SHEET_ID = "1uMm1bqAnVb7Qro8biw7xX6NT4QdURD5ILOQy3CwGy_4"
 
 
-# Connexion Google Sheets hautement optimisée avec nettoyage PEM sécurisé
 @st.cache_resource
 def get_google_sheet():
   try:
@@ -26,7 +25,6 @@ def get_google_sheet():
       with open(json_path, "r", encoding="utf-8") as f:
         creds_dict = json.load(f)
 
-    # Nettoyage et formatage strict de la clé privée PEM
     if "private_key" in creds_dict:
       pk = str(creds_dict["private_key"])
       pk = pk.replace("\\n", "\n").replace("\\\\n", "\n")
@@ -57,11 +55,10 @@ st.markdown(
     " Particuliers, $\ge$ 2005, $\le$ 200k km"
 )
 
-# URL configurée sur une seule ligne pour éviter toute coupure de chaîne
 BASE_URL = "https://www.autoscout24.be/fr/lst?fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
 
 
-def run_scraper_integrated(worksheet, max_pages=30):
+def run_scraper_integrated(worksheet, max_pages=40):
   headers = {
       "User-Agent": (
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
@@ -75,27 +72,21 @@ def run_scraper_integrated(worksheet, max_pages=30):
   except Exception:
     data = []
 
-  db_df = (
-      pd.DataFrame(data)
-      if data
-      else pd.DataFrame(
-          columns=[
-              "ID",
-              "Titre",
-              "Année",
-              "KM",
-              "Prix",
-              "Ville",
-              "Téléphone",
-              "Lien",
-              "Page",
-              "Statut",
-              "Commentaires",
-          ]
-      )
-  )
+  columns_schema = [
+      "ID",
+      "Titre",
+      "Année",
+      "KM",
+      "Prix",
+      "Ville",
+      "Téléphone",
+      "Lien",
+      "Page",
+      "Statut",
+      "Commentaires",
+  ]
+  db_df = pd.DataFrame(data) if data else pd.DataFrame(columns=columns_schema)
 
-  # Sécurisation des ID existants
   if "ID" in db_df.columns and not db_df.empty:
     db_df["ID"] = (
         pd.to_numeric(db_df["ID"], errors="coerce").fillna(0).astype(int)
@@ -130,17 +121,13 @@ def run_scraper_integrated(worksheet, max_pages=30):
         lien = ""
         for a_tag in article.find_all("a", href=True):
           href = a_tag["href"]
-          if "-" in href and (
-              href.startswith("/fr/")
-              or href.startswith("/offers/")
-              or href.startswith("/offres/")
+          if (
+              "-" in href
+              or "/offres/" in href
+              or "/offers/" in href
+              or "/nr/" in href
           ):
-            lien = href
-            break
-        if not lien:
-          for a_tag in article.find_all("a", href=True):
-            href = a_tag["href"]
-            if len(href) > 10 and "javascript" not in href:
+            if not href.startswith("javascript"):
               lien = href
               break
 
@@ -205,7 +192,7 @@ def run_scraper_integrated(worksheet, max_pages=30):
     except Exception:
       continue
 
-  status_text.text("Mise à jour du Google Sheet en cours...")
+  status_text.text("Nettoyage et mise à jour de la base de données...")
   scraped_df = pd.DataFrame(scraped_items)
 
   if not scraped_df.empty:
@@ -219,36 +206,20 @@ def run_scraper_integrated(worksheet, max_pages=30):
             db_df["Titre"].astype(str) + "_" + db_df["Prix"].astype(str)
         )
     else:
-      db_df = pd.DataFrame(
-          columns=[
-              "ID",
-              "Titre",
-              "Année",
-              "KM",
-              "Prix",
-              "Ville",
-              "Téléphone",
-              "Lien",
-              "Page",
-              "Statut",
-              "Commentaires",
-              "Key",
-          ]
-      )
+      db_df = pd.DataFrame(columns=columns_schema + ["Key"])
 
+    scraped_keys = set(scraped_df["Key"].tolist())
     existing_keys = set(db_df["Key"].tolist()) if not db_df.empty else set()
-    new_entries = []
-
-    # Dictionnaire Clé -> Nouvelle Page détectée
     scraped_page_map = dict(zip(scraped_df["Key"], scraped_df["Page"]))
 
-    # 1. Mise à jour de la page si l'annonce est réaperçue
+    # 1. Mise à jour de la page pour les annonces aperçues
     if not db_df.empty:
       for key, new_page in scraped_page_map.items():
         if key in existing_keys:
           db_df.loc[db_df["Key"] == key, "Page"] = int(new_page)
 
-    # 2. Ajout des nouvelles annonces uniquement
+    # 2. Ajout des nouvelles annonces
+    new_entries = []
     for _, row in scraped_df.iterrows():
       if row["Key"] not in existing_keys:
         current_max_id += 1
@@ -267,14 +238,23 @@ def run_scraper_integrated(worksheet, max_pages=30):
             "Key": row["Key"],
         })
 
-    # Aucune bascule automatique vers "Pas intéressé / Vendu" pour préserver 100% des prospects
-
-    final_df = (
+    full_df = (
         pd.concat([db_df, pd.DataFrame(new_entries)], ignore_index=True)
         if new_entries
         else db_df
     )
-    final_df = final_df.drop(columns=["Key"], errors="ignore")
+
+    # 3. FILTRE ET RÉÉCRITURE : On ne garde que les annonces vues OU annotées
+    def is_annotated(row):
+      statut = str(row.get("Statut", "")).strip()
+      comment = str(row.get("Commentaires", "")).strip()
+      return (statut != "" and statut != "Nouveau") or (comment != "")
+
+    kept_df = full_df[
+        full_df["Key"].isin(scraped_keys)
+        | full_df.apply(is_annotated, axis=1)
+    ].copy()
+    final_df = kept_df.drop(columns=["Key"], errors="ignore")
 
     worksheet.clear()
     worksheet.update(
@@ -285,7 +265,6 @@ def run_scraper_integrated(worksheet, max_pages=30):
   status_text.empty()
 
 
-# Connexion sécurisée
 worksheet = get_google_sheet()
 if worksheet is None:
   st.error(
@@ -299,25 +278,24 @@ if worksheet is None:
 st.markdown("---")
 col_sync1, col_sync2 = st.columns([1, 3])
 with col_sync1:
-  if st.button("🔄 Lancer le Scraper (30 Pages)"):
-    with st.spinner("🚀 Scraping et synchronisation en cours..."):
+  if st.button("🔄 Lancer le Scraper (40 Pages)"):
+    with st.spinner("🚀 Scraping et nettoyage en cours..."):
       try:
-        run_scraper_integrated(worksheet, max_pages=30)
+        run_scraper_integrated(worksheet, max_pages=40)
         st.cache_data.clear()
-        st.success("✨ Mise à jour terminée avec succès !")
+        st.success("✨ Base réécrite et synchronisée !")
         st.rerun()
       except Exception as e:
         st.error(f"Erreur lors du scraping : {e}")
 with col_sync2:
   st.markdown(
-      "<br>Cliquez ici pour synchroniser les 30 premières pages d'annonces"
-      " dans le Google Sheet partagé.",
+      "<br>Synchronise les 40 premières pages et nettoie les anciennes annonces"
+      " sans annotation.",
       unsafe_allow_html=True,
   )
 st.markdown("---")
 
 
-# Chargement des données Google Sheets
 @st.cache_data(ttl=60)
 def load_data_from_sheet():
   try:
@@ -349,8 +327,8 @@ df = load_data_from_sheet()
 
 if df.empty:
   st.warning(
-      "⚠️ La base de données est vide ou en cours de chargement. Veuillez"
-      " lancer le scraper via le bouton ci-dessus."
+      "⚠️ La base de données est vide. Veuillez lancer le scraper via le bouton"
+      " ci-dessus."
   )
 else:
   df["Page"] = (
@@ -379,8 +357,21 @@ else:
   )
 
   st.subheader("📋 Liste des annonces")
+  st.caption("💡 Cliquez sur n'importe quelle ligne pour ouvrir sa fiche ci-dessous.")
   display_cols = [c for c in df_filtered.columns if c != "Lien"]
-  st.dataframe(df_filtered[display_cols], use_container_width=True)
+
+  # Interactivité au clic sur la table
+  selection = st.dataframe(
+      df_filtered[display_cols],
+      use_container_width=True,
+      on_select="rerun",
+      selection_mode="single-row",
+  )
+
+  selected_id_from_table = None
+  if selection and selection.get("rows"):
+    selected_row_index = selection["rows"][0]
+    selected_id_from_table = df_filtered.iloc[selected_row_index]["ID"]
 
   if not df_filtered.empty:
     st.markdown("---")
@@ -388,9 +379,19 @@ else:
 
     with col1:
       st.subheader("✏️ Fiche Prospect Détaillée")
+
+      all_ids = df_filtered["ID"].tolist()
+      default_index = 0
+      if (
+          selected_id_from_table is not None
+          and selected_id_from_table in all_ids
+      ):
+        default_index = all_ids.index(selected_id_from_table)
+
       selected_id = st.selectbox(
           "Sélectionner une fiche à consulter / modifier (par ID)",
-          df_filtered["ID"].tolist(),
+          all_ids,
+          index=default_index,
       )
 
       row_data = df[df["ID"] == selected_id].iloc[0]
@@ -399,16 +400,17 @@ else:
       st.markdown(f"**Prix :** {row_data['Prix']} € | **KM :** {row_data['KM']} km")
       st.markdown(f"**Ville :** {row_data['Ville']}")
 
-      has_link = (
-          "Lien" in row_data
-          and pd.notna(row_data["Lien"])
-          and str(row_data["Lien"]).startswith("http")
+      # Traitement propre des liens
+      raw_link = str(row_data.get("Lien", "")).strip()
+      if raw_link.startswith("/"):
+        raw_link = f"https://www.autoscout24.be{raw_link}"
+
+      has_link = raw_link.startswith("http://") or raw_link.startswith(
+          "https://"
       )
 
       if has_link:
-        st.link_button(
-            "🔗 Ouvrir l'annonce exacte sur AutoScout24", row_data["Lien"]
-        )
+        st.link_button("🔗 Ouvrir l'annonce exacte sur AutoScout24", raw_link)
       else:
         raw_title = str(row_data["Titre"])
         words = raw_title.split()
@@ -484,5 +486,5 @@ else:
         worksheet.update(lignes_maj)
         st.cache_data.clear()
 
-        st.success("Modifications enregistrées et synchronisées en temps réel !")
+        st.success("Modifications enregistrées !")
         st.rerun()
