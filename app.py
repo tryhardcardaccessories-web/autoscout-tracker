@@ -212,13 +212,11 @@ def run_scraper_integrated(worksheet, max_pages=40):
     existing_keys = set(db_df["Key"].tolist()) if not db_df.empty else set()
     scraped_page_map = dict(zip(scraped_df["Key"], scraped_df["Page"]))
 
-    # 1. Mise à jour de la page pour les annonces aperçues
     if not db_df.empty:
       for key, new_page in scraped_page_map.items():
         if key in existing_keys:
           db_df.loc[db_df["Key"] == key, "Page"] = int(new_page)
 
-    # 2. Ajout des nouvelles annonces
     new_entries = []
     for _, row in scraped_df.iterrows():
       if row["Key"] not in existing_keys:
@@ -244,7 +242,6 @@ def run_scraper_integrated(worksheet, max_pages=40):
         else db_df
     )
 
-    # 3. FILTRE ET RÉÉCRITURE : On ne garde que les annonces vues OU annotées
     def is_annotated(row):
       statut = str(row.get("Statut", "")).strip()
       comment = str(row.get("Commentaires", "")).strip()
@@ -360,7 +357,6 @@ else:
   st.caption("💡 Cliquez sur n'importe quelle ligne pour ouvrir sa fiche ci-dessous.")
   display_cols = [c for c in df_filtered.columns if c != "Lien"]
 
-  # Interactivité au clic sur la table
   selection = st.dataframe(
       df_filtered[display_cols],
       use_container_width=True,
@@ -400,7 +396,7 @@ else:
       st.markdown(f"**Prix :** {row_data['Prix']} € | **KM :** {row_data['KM']} km")
       st.markdown(f"**Ville :** {row_data['Ville']}")
 
-      # Traitement propre des liens
+      # Traitement robuste des liens et des pages
       raw_link = str(row_data.get("Lien", "")).strip()
       if raw_link.startswith("/"):
         raw_link = f"https://www.autoscout24.be{raw_link}"
@@ -414,9 +410,8 @@ else:
       else:
         raw_title = str(row_data["Titre"])
         words = raw_title.split()
-        model_query = (
-            " ".join(words[:3]) if len(words) >= 3 else raw_title
-        )
+        model_query = " ".join(words[:3]) if len(words) >= 3 else raw_title
+        target_page = int(row_data["Page"])
 
         try:
           p_val = int(
@@ -434,14 +429,12 @@ else:
         safe_query = urllib.parse.quote(model_query)
 
         fallback_url = (
-            "https://www.autoscout24.be/fr/lst?q="
-            + safe_query
-            + price_filter
-            + "&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
+            f"https://www.autoscout24.be/fr/lst?q={safe_query}{price_filter}"
+            f"&page={target_page}&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
             "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
         )
         st.link_button(
-            "🔍 Rechercher ce véhicule sur AutoScout24 (Toutes pages)",
+            f"🔍 Voir l'annonce sur AutoScout24 (Page {target_page})",
             fallback_url,
         )
 
