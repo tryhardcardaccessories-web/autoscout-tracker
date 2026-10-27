@@ -432,91 +432,151 @@ else:
           df[col].fillna("").astype(str).replace("nan", "").replace("<NA>", "")
       )
 
-  # --- ZONE DE RECHERCHE ET FILTRES EN HAUT ---
-  st.subheader("🔍 Filtres & Recherche")
-  col_f1, col_f2 = st.columns([2, 1])
-  with col_f1:
-    search_query = st.text_input(
-        "Rechercher dans les fiches (Modèle, Ville, Commentaire, Tel, Conseiller...)",
-        "",
-    )
-  with col_f2:
-    statuts_filtre = [
-        "Tous",
-        "",
-        "Appel / répondeur",
-        "Injoignable Tel",
-        "Message via site",
-        "Message Whatsapp",
-        "Refus",
-        "Non francophone",
-    ]
-    choix_filtre_statut = st.selectbox("Filtrer par Statut", statuts_filtre)
+  search_query = st.text_input(
+      "🔍 Rechercher dans les fiches (Modèle, Ville, Commentaire, Tel, Conseiller...)",
+      "",
+  )
+  df_filtered = (
+      df[
+          df.astype(str)
+          .apply(lambda x: x.str.contains(search_query, case=False))
+          .any(axis=1)
+      ]
+      if search_query
+      else df
+  )
 
-  df_filtered = df.copy()
-  if search_query:
-    df_filtered = df_filtered[
-        df_filtered.astype(str)
-        .apply(lambda x: x.str.contains(search_query, case=False))
-        .any(axis=1)
-    ]
+  # --- TABLEAU INTERACTIF GLOBAL (STYLE CSV EN FILIGRANE / DATAFRAME) ---
+  st.subheader("📋 Liste globale des annonces")
+  st.caption(
+      "💡 Cliquez sur n'importe quelle ligne du tableau pour sélectionner"
+      " instantanément le véhicule dans la fiche détaillée ci-dessous."
+  )
 
-  if choix_filtre_statut != "Tous":
-    df_filtered = df_filtered[df_filtered["Statut"] == choix_filtre_statut]
+  display_cols = [
+      "ID",
+      "Titre",
+      "Année",
+      "KM",
+      "Prix",
+      "Statut",
+      "Conseiller",
+      "Dernière action",
+      "Lien",
+  ]
+  table_df = df_filtered[
+      [c for c in display_cols if c in df_filtered.columns]
+  ]
+
+  selection = st.dataframe(
+      table_df,
+      use_container_width=True,
+      on_select="rerun",
+      selection_mode="single-row",
+      hide_index=True,
+  )
+
+  # Récupération de l'ID cliqué dans le tableau
+  selected_id_from_table = None
+  if selection and selection.get("rows"):
+    selected_row_index = selection["rows"][0]
+    if selected_row_index < len(df_filtered):
+      selected_id_from_table = int(df_filtered.iloc[selected_row_index]["ID"])
 
   st.markdown("---")
 
-  # --- FICHE PROSPECT DÉTAILLÉE PLACÉE EN HAUT (POUR ÉVITER LE SCROLL) ---
+  # --- FICHE PROSPECT DÉTAILLÉE ---
   st.subheader("✏️ Fiche Prospect Détaillée")
 
   if df_filtered.empty:
-    st.warning("Aucun véhicule ne correspond à votre recherche ou filtre.")
+    st.warning("Aucun véhicule trouvé.")
   else:
     all_ids = df_filtered["ID"].tolist()
     all_ids_int = [int(i) for i in all_ids]
 
-    if "active_id" not in st.session_state or st.session_state.active_id not in all_ids_int:
-      st.session_state.active_id = all_ids_int[0]
+    # Gestion de la sélection par défaut (priorité au clic sur le tableau, sinon premier de la liste)
+    default_index = 0
+    if (
+        selected_id_from_table is not None
+        and selected_id_from_table in all_ids_int
+    ):
+      default_index = all_ids_int.index(selected_id_from_table)
+    elif "last_selected_id" in st.session_state and st.session_state.last_selected_id in all_ids_int:
+      default_index = all_ids_int.index(st.session_state.last_selected_id)
 
     selected_id = st.selectbox(
-        "Sélectionner une fiche à consulter / modifier (par ID ou nom)",
+        "Sélectionner une fiche à consulter / modifier (par ID)",
         all_ids_int,
-        index=all_ids_int.index(st.session_state.active_id)
-        if st.session_state.active_id in all_ids_int
-        else 0,
+        index=default_index,
         format_func=lambda x: f"ID #{x} - {df_filtered[df_filtered['ID'].astype(int) == x]['Titre'].values[0]} ({df_filtered[df_filtered['ID'].astype(int) == x]['Prix'].values[0]} €)",
     )
-    st.session_state.active_id = selected_id
 
+    st.session_state.last_selected_id = selected_id
     row_data = df[df["ID"].astype(int) == selected_id].iloc[0]
 
-    # Affichage des infos du véhicule en colonnes compactes
-    col_info1, col_info2, col_info3 = st.columns(3)
+    col_info1, col_info2 = st.columns([2, 1])
     with col_info1:
-      st.markdown(f"🚗 **Véhicule :** {row_data['Titre']} ({row_data['Année']})")
-      st.markdown(f"📍 **Ville :** {row_data['Ville']}")
+      st.markdown(f"**Véhicule :** {row_data['Titre']} ({row_data['Année']})")
+      st.markdown(f"**Prix :** {row_data['Prix']} € | **KM :** {row_data['KM']} km")
+      st.markdown(f"**Ville :** {row_data['Ville']}")
+
+      derniere_action_actuelle = str(
+          row_data.get("Dernière action", "")
+      ).strip()
+      conseiller_actuel = str(row_data.get("Conseiller", "")).strip()
+      if derniere_action_actuelle:
+        st.info(
+            f"🕒 Modifié le **{derniere_action_actuelle}**"
+            + (f" par **{conseiller_actuel}**" if conseiller_actuel else "")
+        )
+
     with col_info2:
-      st.markdown(
-          f"💰 **Prix :** {row_data['Prix']} € | 🛣️ **KM :** {row_data['KM']} km"
-      )
-    with col_info3:
       raw_link = str(row_data.get("Lien", "")).strip()
       if raw_link.startswith("/"):
         raw_link = f"https://www.autoscout24.be{raw_link}"
-      if raw_link.startswith("http"):
+
+      has_link = raw_link.startswith("http://") or raw_link.startswith(
+          "https://"
+      )
+
+      if has_link:
         st.link_button(
             "🔗 Ouvrir l'annonce sur AutoScout24", raw_link, use_container_width=True
         )
+      else:
+        raw_title = str(row_data["Titre"])
+        words = raw_title.split()
+        model_query = " ".join(words[:3]) if len(words) >= 3 else raw_title
+        target_page = int(row_data["Page"])
 
-    derniere_action_actuelle = str(row_data.get("Dernière action", "")).strip()
-    conseiller_actuel = str(row_data.get("Conseiller", "")).strip()
-    if derniere_action_actuelle:
-      st.info(
-          f"🕒 Modifié le **{derniere_action_actuelle}**"
-          + (f" par **{conseiller_actuel}**" if conseiller_actuel else "")
-      )
+        try:
+          p_val = int(
+              str(row_data["Prix"])
+              .replace(" ", "")
+              .replace("€", "")
+              .replace(".", "")
+          )
+          price_filter = (
+              f"&pricefrom={max(0, p_val - 1000)}&priceto={p_val + 1000}"
+          )
+        except Exception:
+          price_filter = ""
 
-    # Formulaire de modification compact
+        safe_query = urllib.parse.quote(model_query)
+        fallback_url = (
+            f"https://www.autoscout24.be/fr/lst?q={safe_query}{price_filter}"
+            f"&page={target_page}&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
+            "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
+        )
+        st.link_button(
+            f"🔍 Voir l'annonce (Page {target_page})",
+            fallback_url,
+            use_container_width=True,
+        )
+
+    st.markdown("---")
+
+    # Formulaire de modification
     with st.form(key=f"form_prospect_{selected_id}"):
       f_col1, f_col2, f_col3 = st.columns(3)
 
@@ -559,7 +619,7 @@ else:
         )
 
       nouveau_lien = st.text_input(
-          "🔗 Lien direct vers l'annonce (modifiable si besoin)", value=raw_link
+          "🔗 Lien direct vers l'annonce (modifiable)", value=raw_link
       )
 
       current_comment = (
@@ -604,32 +664,3 @@ else:
             f"Modifications enregistrées le {date_heure_actuelle} avec succès !"
         )
         st.rerun()
-
-  st.markdown("---")
-
-  # --- TABLEAU COMPACT ET PROPRE EN BAS ---
-  st.subheader("📋 Liste globale des annonces")
-  st.caption(
-      "💡 Vue globale filtrée (pagination automatique intégrée au tableau)."
-  )
-
-  display_cols = [
-      "ID",
-      "Titre",
-      "Année",
-      "KM",
-      "Prix",
-      "Statut",
-      "Conseiller",
-      "Dernière action",
-      "Lien",
-  ]
-  table_df = df_filtered[
-      [c for c in display_cols if c in df_filtered.columns]
-  ]
-
-  st.dataframe(
-      table_df,
-      use_container_width=True,
-      hide_index=True,
-  )
