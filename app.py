@@ -446,56 +446,75 @@ else:
       else df
   )
 
-  # --- GESTION DE LA PAGINATION DU TABLEAU (10 PAR 10) ---
+  if "active_id" not in st.session_state:
+    st.session_state.active_id = (
+        int(df_filtered.iloc[0]["ID"]) if not df_filtered.empty else 1
+    )
+
   st.subheader("📋 Liste globale des annonces")
 
-  items_par_page = 10
+  # Pagination par 15 annonces
+  items_par_page = 15
   total_lignes = len(df_filtered)
   total_pages = max(1, (total_lignes + items_par_page - 1) // items_par_page)
 
-  col_p1, col_p2 = st.columns([2, 2])
+  col_p1, col_p2 = st.columns([1, 3])
   with col_p1:
     page_tableau = st.selectbox(
-        "📄 Page du tableau",
+        "📄 Page",
         range(1, total_pages + 1),
-        format_func=lambda x: f"Page {x} / {total_pages} (Annonces {(x-1)*items_par_page + 1} à {min(x*items_par_page, total_lignes)} sur {total_lignes})",
-    )
-  with col_p2:
-    st.caption(
-        "💡 Utilise le menu déroulant de la fiche détaillée en dessous pour"
-        " cibler directement un ID spécifique peu importe la page."
+        format_func=lambda x: f"Page {x} / {total_pages}",
     )
 
-  # Découpage de la portion de dataframe à afficher
   debut_idx = (page_tableau - 1) * items_par_page
   fin_idx = min(debut_idx + items_par_page, total_lignes)
   df_page = df_filtered.iloc[debut_idx:fin_idx].copy()
 
-  display_cols = [
-      "ID",
-      "Titre",
-      "Année",
-      "KM",
-      "Prix",
-      "Statut",
-      "Conseiller",
-      "Dernière action",
-      "Lien",
-  ]
-  table_df = df_page[[c for c in display_cols if c in df_page.columns]]
-
-  st.dataframe(
-      table_df,
-      use_container_width=True,
-      hide_index=True,
-      column_config={
-          "Lien": st.column_config.LinkColumn(
-              "Lien Annonce",
-              help="Cliquez pour ouvrir l'annonce AutoScout24",
-              display_text="🔗 Ouvrir",
-          )
-      },
+  # En-têtes de tableau personnalisés
+  h_id, h_titre, h_annee, h_km, h_prix, h_statut, h_act = st.columns(
+      [0.6, 3.5, 0.8, 1, 1, 1.5, 0.8]
   )
+  with h_id:
+    st.markdown("**ID**")
+  with h_titre:
+    st.markdown("**Titre**")
+  with h_annee:
+    st.markdown("**Année**")
+  with h_km:
+    st.markdown("**KM**")
+  with h_prix:
+    st.markdown("**Prix**")
+  with h_statut:
+    st.markdown("**Statut**")
+  with h_act:
+    st.markdown("**Ouvrir**")
+
+  st.markdown("---")
+
+  # Liste des 15 lignes compactes de la page en cours
+  for _, row in df_page.iterrows():
+    vid = int(row["ID"])
+    c_id, c_titre, c_annee, c_km, c_prix, c_statut, c_act = st.columns(
+        [0.6, 3.5, 0.8, 1, 1, 1.5, 0.8]
+    )
+
+    with c_id:
+      st.markdown(f"**#{vid}**")
+    with c_titre:
+      st.markdown(f"🚗 {row['Titre']}")
+    with c_annee:
+      st.markdown(f"{row['Année']}")
+    with c_km:
+      st.markdown(f"{row['KM']} km")
+    with c_prix:
+      st.markdown(f"**{row['Prix']} €**")
+    with c_statut:
+      statut_txt = row["Statut"] if row["Statut"] else "Non contacté"
+      st.markdown(f"*{statut_txt}*")
+    with c_act:
+      if st.button("👁️", key=f"btn_open_{vid}"):
+        st.session_state.active_id = vid
+        st.rerun()
 
   st.markdown("---")
 
@@ -507,15 +526,13 @@ else:
   else:
     all_ids_int = [int(i) for i in df_filtered["ID"].tolist()]
 
-    if "active_id" not in st.session_state or st.session_state.active_id not in all_ids_int:
+    if st.session_state.active_id not in all_ids_int:
       st.session_state.active_id = all_ids_int[0]
 
     selected_id = st.selectbox(
         "Sélectionner une fiche à consulter / modifier (par ID)",
         all_ids_int,
-        index=all_ids_int.index(st.session_state.active_id)
-        if st.session_state.active_id in all_ids_int
-        else 0,
+        index=all_ids_int.index(st.session_state.active_id),
         format_func=lambda x: f"ID #{x} - {df_filtered[df_filtered['ID'].astype(int) == x]['Titre'].values[0]} ({df_filtered[df_filtered['ID'].astype(int) == x]['Prix'].values[0]} €)",
     )
     st.session_state.active_id = selected_id
