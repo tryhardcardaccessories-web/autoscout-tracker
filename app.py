@@ -208,7 +208,6 @@ def run_scraper_integrated(worksheet, max_pages=40):
         + scraped_df["KM"].astype(str).str.strip()
     )
 
-  # 1. CONSOLIDATION DES DOUBLONS DANS LA BASE EXISTANTE
   consolidated_rows = {}
 
   if not db_df.empty:
@@ -261,7 +260,6 @@ def run_scraper_integrated(worksheet, max_pages=40):
   else:
     current_max_id = 0
 
-  # 2. APPLICATION DU SCAN DU JOUR
   scraped_keys = set(scraped_df["Key"].tolist()) if not scraped_df.empty else set()
   existing_keys = set(db_consolidated_df["Key"].tolist()) if not db_consolidated_df.empty else set()
 
@@ -312,7 +310,6 @@ def run_scraper_integrated(worksheet, max_pages=40):
   else:
     full_df = db_consolidated_df
 
-  # 3. FILTRE ET NETTOYAGE FINAL
   def is_annotated(row):
     statut = str(row.get("Statut", "")).strip()
     comment = str(row.get("Commentaires", "")).strip()
@@ -450,49 +447,71 @@ else:
   )
 
   st.subheader("📋 Liste des annonces")
-  st.caption("💡 Cliquez sur n'importe quelle ligne pour ouvrir sa fiche ci-dessous.")
-  display_cols = [c for c in df_filtered.columns if c != "Lien"]
-
-  selection = st.dataframe(
-      df_filtered[display_cols],
-      use_container_width=True,
-      on_select="rerun",
-      selection_mode="single-row",
+  st.markdown(
+      "💡 *Clique sur le bouton **'🔍 Fiche'** d'une annonce pour l'ouvrir"
+      " instantanément ci-dessous.*"
   )
 
-  selected_id_from_table = None
-  if selection and selection.get("rows"):
-    selected_row_index = selection["rows"][0]
-    selected_id_from_table = df_filtered.iloc[selected_row_index]["ID"]
+  # Initialisation de la mémoire de sélection active dans la session
+  if "active_id" not in st.session_state:
+    st.session_state.active_id = (
+        int(df_filtered.iloc[0]["ID"]) if not df_filtered.empty else None
+    )
+
+  # Tableau interactif avec boutons de sélection directe par ligne
+  for _, row in df_filtered.iterrows():
+    vid = int(row["ID"])
+    c1, c2, c3, c4, c5, c6 = st.columns([0.6, 3.2, 1, 1, 1.5, 1])
+
+    with c1:
+      st.markdown(f"**#{vid}**")
+    with c2:
+      st.markdown(f"🚗 {row['Titre']}")
+    with c3:
+      st.markdown(f"{row['Année']}")
+    with c4:
+      st.markdown(f"{row['Prix']} €")
+    with c5:
+      st.markdown(
+          f"*{row['Statut'] if row['Statut'] else 'Non contacté'}*"
+      )
+    with c6:
+      if st.button("🔍 Fiche", key=f"btn_fiche_{vid}ெ"):
+        st.session_state.active_id = vid
+        st.rerun()
+
+  st.markdown("---")
 
   if not df_filtered.empty:
-    st.markdown("---")
     col1, col2 = st.columns([1, 2])
 
     with col1:
       st.subheader("✏️ Fiche Prospect Détaillée")
 
       all_ids = df_filtered["ID"].tolist()
+      # Convertir les IDs en int pour la sélection
+      all_ids_int = [int(i) for i in all_ids]
+
       default_index = 0
-      if (
-          selected_id_from_table is not None
-          and selected_id_from_table in all_ids
-      ):
-        default_index = all_ids.index(selected_id_from_table)
+      current_active = st.session_state.get(
+          "active_id", all_ids_int[0] if all_ids_int else 0
+      )
+      if current_active in all_ids_int:
+        default_index = all_ids_int.index(current_active)
 
       selected_id = st.selectbox(
           "Sélectionner une fiche à consulter / modifier (par ID)",
-          all_ids,
+          all_ids_int,
           index=default_index,
       )
+      st.session_state.active_id = selected_id
 
-      row_data = df[df["ID"] == selected_id].iloc[0]
+      row_data = df[df["ID"].astype(int) == selected_id].iloc[0]
 
       st.markdown(f"**Véhicule :** {row_data['Titre']} ({row_data['Année']})")
       st.markdown(f"**Prix :** {row_data['Prix']} € | **KM :** {row_data['KM']} km")
       st.markdown(f"**Ville :** {row_data['Ville']}")
 
-      # Affichage info traçabilité actuelle si présente
       derniere_action_actuelle = str(
           row_data.get("Dernière action", "")
       ).strip()
@@ -559,7 +578,6 @@ else:
           "🔗 Lien direct vers l'annonce", value=raw_link
       )
 
-      # Choix du conseiller
       conseillers_possibles = ["", "Ludo", "Elias", "Charliy", "Théo"]
       index_conseiller = (
           conseillers_possibles.index(conseiller_actuel)
@@ -603,17 +621,24 @@ else:
       )
 
       if st.button("💾 Enregistrer les modifications"):
-        # Génération automatique de la date et heure du jour (ex: 27/10/2026 à 16:37)
         date_heure_actuelle = datetime.now().strftime("%d/%m/%Y à %H:%M")
 
-        df.loc[df["ID"] == selected_id, "Téléphone"] = str(nouveau_telephone)
-        df.loc[df["ID"] == selected_id, "Lien"] = str(nouveau_lien)
-        df.loc[df["ID"] == selected_id, "Conseiller"] = str(nouveau_conseiller)
-        df.loc[df["ID"] == selected_id, "Statut"] = str(nouveau_statut)
-        df.loc[df["ID"] == selected_id, "Commentaires"] = str(
+        df.loc[df["ID"].astype(int) == selected_id, "Téléphone"] = str(
+            nouveau_telephone
+        )
+        df.loc[df["ID"].astype(int) == selected_id, "Lien"] = str(nouveau_lien)
+        df.loc[df["ID"].astype(int) == selected_id, "Conseiller"] = str(
+            nouveau_conseiller
+        )
+        df.loc[df["ID"].astype(int) == selected_id, "Statut"] = str(
+            nouveau_statut
+        )
+        df.loc[df["ID"].astype(int) == selected_id, "Commentaires"] = str(
             nouveau_commentaire
         )
-        df.loc[df["ID"] == selected_id, "Dernière action"] = date_heure_actuelle
+        df.loc[df["ID"].astype(int) == selected_id, "Dernière action"] = (
+            date_heure_actuelle
+        )
 
         worksheet.clear()
         lignes_maj = [df.columns.values.tolist()] + df.values.tolist()
