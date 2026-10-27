@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 import os
 import urllib.parse
@@ -83,6 +84,8 @@ def run_scraper_integrated(worksheet, max_pages=40):
       "Lien",
       "Page",
       "Statut",
+      "Conseiller",
+      "Dernière action",
       "Commentaires",
   ]
   db_df = pd.DataFrame(data) if data else pd.DataFrame(columns=columns_schema)
@@ -185,7 +188,6 @@ def run_scraper_integrated(worksheet, max_pages=40):
   status_text.text("Mise à jour des positions et fusion des notes...")
   scraped_df = pd.DataFrame(scraped_items)
 
-  # Génération des clés uniques (Titre + Prix + KM)
   if not db_df.empty:
     db_df["Key"] = (
         db_df["Titre"].astype(str).str.strip().str.lower()
@@ -215,13 +217,11 @@ def run_scraper_integrated(worksheet, max_pages=40):
       if key not in consolidated_rows:
         consolidated_rows[key] = row.to_dict()
       else:
-        # Conservation du lien valide s'il était manquant
         if not str(consolidated_rows[key].get("Lien", "")).startswith(
             "http"
         ) and str(row.get("Lien", "")).startswith("http"):
           consolidated_rows[key]["Lien"] = row["Lien"]
 
-        # Conservation du téléphone saisi
         existing_tel = str(consolidated_rows[key].get("Téléphone", "")).strip()
         new_tel = str(row.get("Téléphone", "")).strip()
         if (
@@ -230,13 +230,18 @@ def run_scraper_integrated(worksheet, max_pages=40):
         ):
           consolidated_rows[key]["Téléphone"] = new_tel
 
-        # Conservation du statut
         existing_statut = str(consolidated_rows[key].get("Statut", "")).strip()
         new_statut = str(row.get("Statut", "")).strip()
         if not existing_statut and new_statut:
           consolidated_rows[key]["Statut"] = new_statut
 
-        # Fusion des commentaires
+        existing_conseiller = str(
+            consolidated_rows[key].get("Conseiller", "")
+        ).strip()
+        new_conseiller = str(row.get("Conseiller", "")).strip()
+        if not existing_conseiller and new_conseiller:
+          consolidated_rows[key]["Conseiller"] = new_conseiller
+
         c1 = str(consolidated_rows[key].get("Commentaires", "")).strip()
         c2 = str(row.get("Commentaires", "")).strip()
         if c1 and c2 and c1 != c2:
@@ -246,7 +251,6 @@ def run_scraper_integrated(worksheet, max_pages=40):
 
   db_consolidated_df = pd.DataFrame(list(consolidated_rows.values()))
 
-  # Calcul du dernier ID attribué
   if not db_consolidated_df.empty and "ID" in db_consolidated_df.columns:
     current_max_id = (
         pd.to_numeric(db_consolidated_df["ID"], errors="coerce")
@@ -257,7 +261,7 @@ def run_scraper_integrated(worksheet, max_pages=40):
   else:
     current_max_id = 0
 
-  # 2. APPLICATION DU SCAN DU JOUR (Met à jour la VRAIE page récente)
+  # 2. APPLICATION DU SCAN DU JOUR
   scraped_keys = set(scraped_df["Key"].tolist()) if not scraped_df.empty else set()
   existing_keys = set(db_consolidated_df["Key"].tolist()) if not db_consolidated_df.empty else set()
 
@@ -265,16 +269,18 @@ def run_scraper_integrated(worksheet, max_pages=40):
     scraped_page_map = dict(zip(scraped_df["Key"], scraped_df["Page"]))
     scraped_link_map = dict(zip(scraped_df["Key"], scraped_df["Lien"]))
 
-    # ÉCRASEMENT DE LA PAGE : On force la position trouvée lors du scan du jour
     if not db_consolidated_df.empty:
       for key, new_page in scraped_page_map.items():
         if key in existing_keys:
-          db_consolidated_df.loc[db_consolidated_df["Key"] == key, "Page"] = int(new_page)
+          db_consolidated_df.loc[
+              db_consolidated_df["Key"] == key, "Page"
+          ] = int(new_page)
           new_l = scraped_link_map.get(key, "")
           if new_l and new_l.startswith("http"):
-            db_consolidated_df.loc[db_consolidated_df["Key"] == key, "Lien"] = new_l
+            db_consolidated_df.loc[db_consolidated_df["Key"] == key, "Lien"] = (
+                new_l
+            )
 
-    # Ajout des tout nouveaux véhicules
     new_entries = []
     for _, row in scraped_df.iterrows():
       if row["Key"] not in existing_keys:
@@ -290,12 +296,16 @@ def run_scraper_integrated(worksheet, max_pages=40):
             "Lien": row["Lien"],
             "Page": int(row["Page"]),
             "Statut": "",
+            "Conseiller": "",
+            "Dernière action": "",
             "Commentaires": "",
             "Key": row["Key"],
         })
 
     full_df = (
-        pd.concat([db_consolidated_df, pd.DataFrame(new_entries)], ignore_index=True)
+        pd.concat(
+            [db_consolidated_df, pd.DataFrame(new_entries)], ignore_index=True
+        )
         if new_entries
         else db_consolidated_df
     )
@@ -307,9 +317,11 @@ def run_scraper_integrated(worksheet, max_pages=40):
     statut = str(row.get("Statut", "")).strip()
     comment = str(row.get("Commentaires", "")).strip()
     tel = str(row.get("Téléphone", "")).strip()
+    cons = str(row.get("Conseiller", "")).strip()
     return (
         (statut != "")
         or (comment != "")
+        or (cons != "")
         or (tel != "" and tel != "Voir sur l'annonce")
     )
 
@@ -319,7 +331,11 @@ def run_scraper_integrated(worksheet, max_pages=40):
     ].copy()
     final_df = kept_df.drop(columns=["Key"], errors="ignore")
 
-    # Tri par ID
+    for col in columns_schema:
+      if col not in final_df.columns:
+        final_df[col] = ""
+
+    final_df = final_df[columns_schema]
     final_df = final_df.sort_values(by="ID").reset_index(drop=True)
 
     worksheet.clear()
@@ -366,25 +382,26 @@ st.markdown("---")
 def load_data_from_sheet():
   try:
     data = worksheet.get_all_records()
-    return (
-        pd.DataFrame(data)
-        if data
-        else pd.DataFrame(
-            columns=[
-                "ID",
-                "Titre",
-                "Année",
-                "KM",
-                "Prix",
-                "Ville",
-                "Téléphone",
-                "Lien",
-                "Page",
-                "Statut",
-                "Commentaires",
-            ]
-        )
-    )
+    df_loaded = pd.DataFrame(data) if data else pd.DataFrame()
+    expected_cols = [
+        "ID",
+        "Titre",
+        "Année",
+        "KM",
+        "Prix",
+        "Ville",
+        "Téléphone",
+        "Lien",
+        "Page",
+        "Statut",
+        "Conseiller",
+        "Dernière action",
+        "Commentaires",
+    ]
+    for c in expected_cols:
+      if c not in df_loaded.columns:
+        df_loaded[c] = ""
+    return df_loaded
   except Exception:
     return pd.DataFrame()
 
@@ -403,14 +420,24 @@ else:
       else 1
   )
 
-  for col in ["Statut", "Commentaires", "Téléphone", "Lien", "Titre", "Ville"]:
+  for col in [
+      "Statut",
+      "Conseiller",
+      "Dernière action",
+      "Commentaires",
+      "Téléphone",
+      "Lien",
+      "Titre",
+      "Ville",
+  ]:
     if col in df.columns:
       df[col] = (
           df[col].fillna("").astype(str).replace("nan", "").replace("<NA>", "")
       )
 
   search_query = st.text_input(
-      "🔍 Rechercher dans les fiches (Modèle, Ville, Commentaire, Tel...)", ""
+      "🔍 Rechercher dans les fiches (Modèle, Ville, Commentaire, Tel, Conseiller...)",
+      "",
   )
   df_filtered = (
       df[
@@ -464,6 +491,17 @@ else:
       st.markdown(f"**Véhicule :** {row_data['Titre']} ({row_data['Année']})")
       st.markdown(f"**Prix :** {row_data['Prix']} € | **KM :** {row_data['KM']} km")
       st.markdown(f"**Ville :** {row_data['Ville']}")
+
+      # Affichage info traçabilité actuelle si présente
+      derniere_action_actuelle = str(
+          row_data.get("Dernière action", "")
+      ).strip()
+      conseiller_actuel = str(row_data.get("Conseiller", "")).strip()
+      if derniere_action_actuelle:
+        st.info(
+            f"🕒 Modifié le **{derniere_action_actuelle}**"
+            + (f" par **{conseiller_actuel}**" if conseiller_actuel else "")
+        )
 
       raw_link = str(row_data.get("Lien", "")).strip()
       if raw_link.startswith("/"):
@@ -521,6 +559,19 @@ else:
           "🔗 Lien direct vers l'annonce", value=raw_link
       )
 
+      # Choix du conseiller
+      conseillers_possibles = ["", "Ludo", "Elias", "Charliy", "Théo"]
+      index_conseiller = (
+          conseillers_possibles.index(conseiller_actuel)
+          if conseiller_actuel in conseillers_possibles
+          else 0
+      )
+      nouveau_conseiller = st.selectbox(
+          "👤 Conseiller en charge",
+          conseillers_possibles,
+          index=index_conseiller,
+      )
+
       statuts_possibles = [
           "",
           "Appel / répondeur",
@@ -552,17 +603,24 @@ else:
       )
 
       if st.button("💾 Enregistrer les modifications"):
+        # Génération automatique de la date et heure du jour (ex: 27/10/2026 à 16:37)
+        date_heure_actuelle = datetime.now().strftime("%d/%m/%Y à %H:%M")
+
         df.loc[df["ID"] == selected_id, "Téléphone"] = str(nouveau_telephone)
         df.loc[df["ID"] == selected_id, "Lien"] = str(nouveau_lien)
+        df.loc[df["ID"] == selected_id, "Conseiller"] = str(nouveau_conseiller)
         df.loc[df["ID"] == selected_id, "Statut"] = str(nouveau_statut)
         df.loc[df["ID"] == selected_id, "Commentaires"] = str(
             nouveau_commentaire
         )
+        df.loc[df["ID"] == selected_id, "Dernière action"] = date_heure_actuelle
 
         worksheet.clear()
         lignes_maj = [df.columns.values.tolist()] + df.values.tolist()
         worksheet.update(lignes_maj)
         st.cache_data.clear()
 
-        st.success("Modifications enregistrées !")
+        st.success(
+            f"Modifications enregistrées le {date_heure_actuelle} !"
+        )
         st.rerun()
