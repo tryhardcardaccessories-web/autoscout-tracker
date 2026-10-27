@@ -446,13 +446,30 @@ else:
       else df
   )
 
-  # --- TABLEAU GLOBAL ---
+  # --- GESTION DE LA PAGINATION DU TABLEAU (10 PAR 10) ---
   st.subheader("📋 Liste globale des annonces")
-  st.caption(
-      "💡 Cliquez sur n'importe quelle ligne du tableau pour ouvrir"
-      " instantanément sa fiche détaillée ci-dessous. Les liens dans la colonne"
-      " 'Lien' sont cliquables directement."
-  )
+
+  items_par_page = 10
+  total_lignes = len(df_filtered)
+  total_pages = max(1, (total_lignes + items_par_page - 1) // items_par_page)
+
+  col_p1, col_p2 = st.columns([2, 2])
+  with col_p1:
+    page_tableau = st.selectbox(
+        "📄 Page du tableau",
+        range(1, total_pages + 1),
+        format_func=lambda x: f"Page {x} / {total_pages} (Annonces {(x-1)*items_par_page + 1} à {min(x*items_par_page, total_lignes)} sur {total_lignes})",
+    )
+  with col_p2:
+    st.caption(
+        "💡 Utilise le menu déroulant de la fiche détaillée en dessous pour"
+        " cibler directement un ID spécifique peu importe la page."
+    )
+
+  # Découpage de la portion de dataframe à afficher
+  debut_idx = (page_tableau - 1) * items_par_page
+  fin_idx = min(debut_idx + items_par_page, total_lignes)
+  df_page = df_filtered.iloc[debut_idx:fin_idx].copy()
 
   display_cols = [
       "ID",
@@ -465,15 +482,11 @@ else:
       "Dernière action",
       "Lien",
   ]
-  table_df = df_filtered[
-      [c for c in display_cols if c in df_filtered.columns]
-  ].copy()
+  table_df = df_page[[c for c in display_cols if c in df_page.columns]]
 
-  selection = st.dataframe(
+  st.dataframe(
       table_df,
       use_container_width=True,
-      on_select="rerun",
-      selection_mode="single-row",
       hide_index=True,
       column_config={
           "Lien": st.column_config.LinkColumn(
@@ -484,24 +497,6 @@ else:
       },
   )
 
-  # CORRECTION DE LA CAPTURE DU CLIC DE LIGNE
-  selected_id_from_table = None
-  if selection and "selection" in selection:
-    sel_rows = selection["selection"].get("rows", [])
-    if sel_rows:
-      selected_row_index = sel_rows[0]
-      if selected_row_index < len(df_filtered):
-        selected_id_from_table = int(df_filtered.iloc[selected_row_index]["ID"])
-  elif selection and isinstance(selection, dict) and "rows" in selection:
-    sel_rows = selection["rows"]
-    if sel_rows:
-      selected_row_index = sel_rows[0]
-      if selected_row_index < len(df_filtered):
-        selected_id_from_table = int(df_filtered.iloc[selected_row_index]["ID"])
-
-  if selected_id_from_table is not None:
-    st.session_state.active_id = selected_id_from_table
-
   st.markdown("---")
 
   # --- FICHE PROSPECT DÉTAILLÉE ---
@@ -510,30 +505,21 @@ else:
   if df_filtered.empty:
     st.warning("Aucun véhicule trouvé.")
   else:
-    all_ids = df_filtered["ID"].tolist()
-    all_ids_int = [int(i) for i in all_ids]
+    all_ids_int = [int(i) for i in df_filtered["ID"].tolist()]
 
-    # Priorité absolue à l'ID cliqué dans le tableau s'il existe
-    if "active_id" not in st.session_state:
+    if "active_id" not in st.session_state or st.session_state.active_id not in all_ids_int:
       st.session_state.active_id = all_ids_int[0]
-
-    if selected_id_from_table is not None and selected_id_from_table in all_ids_int:
-      st.session_state.active_id = selected_id_from_table
-
-    if st.session_state.active_id not in all_ids_int:
-      st.session_state.active_id = all_ids_int[0]
-
-    default_index = all_ids_int.index(st.session_state.active_id)
 
     selected_id = st.selectbox(
         "Sélectionner une fiche à consulter / modifier (par ID)",
         all_ids_int,
-        index=default_index,
+        index=all_ids_int.index(st.session_state.active_id)
+        if st.session_state.active_id in all_ids_int
+        else 0,
         format_func=lambda x: f"ID #{x} - {df_filtered[df_filtered['ID'].astype(int) == x]['Titre'].values[0]} ({df_filtered[df_filtered['ID'].astype(int) == x]['Prix'].values[0]} €)",
     )
-
-    # Mémorise le choix du selectbox s'il est manipulé manuellement
     st.session_state.active_id = selected_id
+
     row_data = df[df["ID"].astype(int) == selected_id].iloc[0]
 
     col_info1, col_info2 = st.columns([2, 1])
