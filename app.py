@@ -231,7 +231,7 @@ def run_scraper_integrated(worksheet, max_pages=40):
             "Téléphone": row["Téléphone"],
             "Lien": row["Lien"],
             "Page": int(row["Page"]),
-            "Statut": "Nouveau",
+            "Statut": "",
             "Commentaires": "",
             "Key": row["Key"],
         })
@@ -245,7 +245,12 @@ def run_scraper_integrated(worksheet, max_pages=40):
     def is_annotated(row):
       statut = str(row.get("Statut", "")).strip()
       comment = str(row.get("Commentaires", "")).strip()
-      return (statut != "" and statut != "Nouveau") or (comment != "")
+      tel = str(row.get("Téléphone", "")).strip()
+      return (
+          (statut != "")
+          or (comment != "")
+          or (tel != "" and tel != "Voir sur l'annonce")
+      )
 
     kept_df = full_df[
         full_df["Key"].isin(scraped_keys)
@@ -341,7 +346,7 @@ else:
       )
 
   search_query = st.text_input(
-      "🔍 Rechercher dans les fiches (Modèle, Ville, Commentaire...)", ""
+      "🔍 Rechercher dans les fiches (Modèle, Ville, Commentaire, Tel...)", ""
   )
   df_filtered = (
       df[
@@ -396,7 +401,7 @@ else:
       st.markdown(f"**Prix :** {row_data['Prix']} € | **KM :** {row_data['KM']} km")
       st.markdown(f"**Ville :** {row_data['Ville']}")
 
-      # Traitement robuste des liens et des pages
+      # Traitement des liens
       raw_link = str(row_data.get("Lien", "")).strip()
       if raw_link.startswith("/"):
         raw_link = f"https://www.autoscout24.be{raw_link}"
@@ -440,23 +445,42 @@ else:
 
       st.markdown("---")
 
+      # Édition du Téléphone / WhatsApp
+      current_tel = str(row_data.get("Téléphone", "")).strip()
+      if current_tel in ["", "Voir sur l'annonce"]:
+        default_tel = "+32 "
+      else:
+        default_tel = current_tel
+
+      nouveau_telephone = st.text_input(
+          "📞 Téléphone / WhatsApp", value=default_tel
+      )
+
+      # Édition du Lien direct
+      nouveau_lien = st.text_input(
+          "🔗 Lien direct vers l'annonce", value=raw_link
+      )
+
+      # Statuts personnalisés
       statuts_possibles = [
-          "Nouveau",
-          "Appelé - Répondeur",
-          "À relancer",
-          "RDV / Intéressé",
-          "Pas intéressé / Vendu",
+          "",  # Champ vide par défaut
+          "Appel / répondeur",
+          "Injoignable Tel",
+          "Message via site",
+          "Message Whatsapp",
+          "Refus",
+          "Non francophone",
       ]
-      current_statut = (
-          str(row_data["Statut"])
-          if str(row_data["Statut"]) in statuts_possibles
-          else "Nouveau"
+
+      current_statut = str(row_data.get("Statut", "")).strip()
+      index_statut = (
+          statuts_possibles.index(current_statut)
+          if current_statut in statuts_possibles
+          else 0
       )
 
       nouveau_statut = st.selectbox(
-          "Statut de l'appel",
-          statuts_possibles,
-          index=statuts_possibles.index(current_statut),
+          "Statut de l'appel", statuts_possibles, index=index_statut
       )
 
       current_comment = (
@@ -469,6 +493,8 @@ else:
       )
 
       if st.button("💾 Enregistrer les modifications"):
+        df.loc[df["ID"] == selected_id, "Téléphone"] = str(nouveau_telephone)
+        df.loc[df["ID"] == selected_id, "Lien"] = str(nouveau_lien)
         df.loc[df["ID"] == selected_id, "Statut"] = str(nouveau_statut)
         df.loc[df["ID"] == selected_id, "Commentaires"] = str(
             nouveau_commentaire
