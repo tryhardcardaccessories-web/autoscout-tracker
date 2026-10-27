@@ -87,16 +87,6 @@ def run_scraper_integrated(worksheet, max_pages=40):
   ]
   db_df = pd.DataFrame(data) if data else pd.DataFrame(columns=columns_schema)
 
-  if "ID" in db_df.columns and not db_df.empty:
-    db_df["ID"] = (
-        pd.to_numeric(db_df["ID"], errors="coerce").fillna(0).astype(int)
-    )
-    current_max_id = (
-        db_df["ID"].max() if not db_df["ID"].empty and db_df["ID"].max() > 0 else 0
-    )
-  else:
-    current_max_id = 0
-
   scraped_items = []
   progres_bar = st.progress(0)
   status_text = st.empty()
@@ -192,31 +182,99 @@ def run_scraper_integrated(worksheet, max_pages=40):
     except Exception:
       continue
 
-  status_text.text("Nettoyage et mise à jour de la base de données...")
+  status_text.text("Mise à jour des positions et fusion des notes...")
   scraped_df = pd.DataFrame(scraped_items)
+
+  # Génération des clés uniques (Titre + Prix + KM)
+  if not db_df.empty:
+    db_df["Key"] = (
+        db_df["Titre"].astype(str).str.strip().str.lower()
+        + "_"
+        + db_df["Prix"].astype(str).str.strip()
+        + "_"
+        + db_df["KM"].astype(str).str.strip()
+    )
+  else:
+    db_df = pd.DataFrame(columns=columns_schema + ["Key"])
 
   if not scraped_df.empty:
     scraped_df["Key"] = (
-        scraped_df["Titre"].astype(str) + "_" + scraped_df["Prix"].astype(str)
+        scraped_df["Titre"].astype(str).str.strip().str.lower()
+        + "_"
+        + scraped_df["Prix"].astype(str).str.strip()
+        + "_"
+        + scraped_df["KM"].astype(str).str.strip()
     )
 
-    if not db_df.empty:
-      if "Key" not in db_df.columns:
-        db_df["Key"] = (
-            db_df["Titre"].astype(str) + "_" + db_df["Prix"].astype(str)
-        )
-    else:
-      db_df = pd.DataFrame(columns=columns_schema + ["Key"])
+  # 1. CONSOLIDATION DES DOUBLONS DANS LA BASE EXISTANTE
+  consolidated_rows = {}
 
-    scraped_keys = set(scraped_df["Key"].tolist())
-    existing_keys = set(db_df["Key"].tolist()) if not db_df.empty else set()
+  if not db_df.empty:
+    for _, row in db_df.iterrows():
+      key = row["Key"]
+      if key not in consolidated_rows:
+        consolidated_rows[key] = row.to_dict()
+      else:
+        # Conservation du lien valide s'il était manquant
+        if not str(consolidated_rows[key].get("Lien", "")).startswith(
+            "http"
+        ) and str(row.get("Lien", "")).startswith("http"):
+          consolidated_rows[key]["Lien"] = row["Lien"]
+
+        # Conservation du téléphone saisi
+        existing_tel = str(consolidated_rows[key].get("Téléphone", "")).strip()
+        new_tel = str(row.get("Téléphone", "")).strip()
+        if (
+            existing_tel in ["", "Voir sur l'annonce"]
+            and new_tel not in ["", "Voir sur l'annonce"]
+        ):
+          consolidated_rows[key]["Téléphone"] = new_tel
+
+        # Conservation du statut
+        existing_statut = str(consolidated_rows[key].get("Statut", "")).strip()
+        new_statut = str(row.get("Statut", "")).strip()
+        if not existing_statut and new_statut:
+          consolidated_rows[key]["Statut"] = new_statut
+
+        # Fusion des commentaires
+        c1 = str(consolidated_rows[key].get("Commentaires", "")).strip()
+        c2 = str(row.get("Commentaires", "")).strip()
+        if c1 and c2 and c1 != c2:
+          consolidated_rows[key]["Commentaires"] = f"{c1} | {c2}"
+        elif c2 and not c1:
+          consolidated_rows[key]["Commentaires"] = c2
+
+  db_consolidated_df = pd.DataFrame(list(consolidated_rows.values()))
+
+  # Calcul du dernier ID attribué
+  if not db_consolidated_df.empty and "ID" in db_consolidated_df.columns:
+    current_max_id = (
+        pd.to_numeric(db_consolidated_df["ID"], errors="coerce")
+        .fillna(0)
+        .astype(int)
+        .max()
+    )
+  else:
+    current_max_id = 0
+
+  # 2. APPLICATION DU SCAN DU JOUR (Met à jour la VRAIE page récente)
+  scraped_keys = set(scraped_df["Key"].tolist()) if not scraped_df.empty else set()
+  existing_keys = set(db_consolidated_df["Key"].tolist()) if not db_consolidated_df.empty else set()
+
+  if not scraped_df.empty:
     scraped_page_map = dict(zip(scraped_df["Key"], scraped_df["Page"]))
+    scraped_link_map = dict(zip(scraped_df["Key"], scraped_df["Lien"]))
 
-    if not db_df.empty:
+    # ÉCRASEMENT DE LA PAGE : On force la position trouvée lors du scan du jour
+    if not db_consolidated_df.empty:
       for key, new_page in scraped_page_map.items():
         if key in existing_keys:
-          db_df.loc[db_df["Key"] == key, "Page"] = int(new_page)
+          db_consolidated_df.loc[db_consolidated_df["Key"] == key, "Page"] = int(new_page)
+          new_l = scraped_link_map.get(key, "")
+          if new_l and new_l.startswith("http"):
+            db_consolidated_df.loc[db_consolidated_df["Key"] == key, "Lien"] = new_l
 
+    # Ajout des tout nouveaux véhicules
     new_entries = []
     for _, row in scraped_df.iterrows():
       if row["Key"] not in existing_keys:
@@ -237,26 +295,32 @@ def run_scraper_integrated(worksheet, max_pages=40):
         })
 
     full_df = (
-        pd.concat([db_df, pd.DataFrame(new_entries)], ignore_index=True)
+        pd.concat([db_consolidated_df, pd.DataFrame(new_entries)], ignore_index=True)
         if new_entries
-        else db_df
+        else db_consolidated_df
+    )
+  else:
+    full_df = db_consolidated_df
+
+  # 3. FILTRE ET NETTOYAGE FINAL
+  def is_annotated(row):
+    statut = str(row.get("Statut", "")).strip()
+    comment = str(row.get("Commentaires", "")).strip()
+    tel = str(row.get("Téléphone", "")).strip()
+    return (
+        (statut != "")
+        or (comment != "")
+        or (tel != "" and tel != "Voir sur l'annonce")
     )
 
-    def is_annotated(row):
-      statut = str(row.get("Statut", "")).strip()
-      comment = str(row.get("Commentaires", "")).strip()
-      tel = str(row.get("Téléphone", "")).strip()
-      return (
-          (statut != "")
-          or (comment != "")
-          or (tel != "" and tel != "Voir sur l'annonce")
-      )
-
+  if not full_df.empty:
     kept_df = full_df[
-        full_df["Key"].isin(scraped_keys)
-        | full_df.apply(is_annotated, axis=1)
+        full_df["Key"].isin(scraped_keys) | full_df.apply(is_annotated, axis=1)
     ].copy()
     final_df = kept_df.drop(columns=["Key"], errors="ignore")
+
+    # Tri par ID
+    final_df = final_df.sort_values(by="ID").reset_index(drop=True)
 
     worksheet.clear()
     worksheet.update(
@@ -281,18 +345,18 @@ st.markdown("---")
 col_sync1, col_sync2 = st.columns([1, 3])
 with col_sync1:
   if st.button("🔄 Lancer le Scraper (40 Pages)"):
-    with st.spinner("🚀 Scraping et nettoyage en cours..."):
+    with st.spinner("🚀 Scraping, mise à jour des pages et nettoyage..."):
       try:
         run_scraper_integrated(worksheet, max_pages=40)
         st.cache_data.clear()
-        st.success("✨ Base réécrite et synchronisée !")
+        st.success("✨ Pages réactualisées et base synchronisée !")
         st.rerun()
       except Exception as e:
         st.error(f"Erreur lors du scraping : {e}")
 with col_sync2:
   st.markdown(
-      "<br>Synchronise les 40 premières pages et nettoie les anciennes annonces"
-      " sans annotation.",
+      "<br>Actualise les positions exactes des annonces du jour et rassemble tes"
+      " notes.",
       unsafe_allow_html=True,
   )
 st.markdown("---")
@@ -401,7 +465,6 @@ else:
       st.markdown(f"**Prix :** {row_data['Prix']} € | **KM :** {row_data['KM']} km")
       st.markdown(f"**Ville :** {row_data['Ville']}")
 
-      # Traitement des liens
       raw_link = str(row_data.get("Lien", "")).strip()
       if raw_link.startswith("/"):
         raw_link = f"https://www.autoscout24.be{raw_link}"
@@ -445,7 +508,6 @@ else:
 
       st.markdown("---")
 
-      # Édition du Téléphone / WhatsApp
       current_tel = str(row_data.get("Téléphone", "")).strip()
       if current_tel in ["", "Voir sur l'annonce"]:
         default_tel = "+32 "
@@ -455,15 +517,12 @@ else:
       nouveau_telephone = st.text_input(
           "📞 Téléphone / WhatsApp", value=default_tel
       )
-
-      # Édition du Lien direct
       nouveau_lien = st.text_input(
           "🔗 Lien direct vers l'annonce", value=raw_link
       )
 
-      # Statuts personnalisés
       statuts_possibles = [
-          "",  # Champ vide par défaut
+          "",
           "Appel / répondeur",
           "Injoignable Tel",
           "Message via site",
