@@ -446,11 +446,12 @@ else:
       else df
   )
 
-  # --- TABLEAU INTERACTIF GLOBAL (STYLE CSV EN FILIGRANE / DATAFRAME) ---
+  # --- TABLEAU GLOBAL AVEC LIENS CLIQUABLES ---
   st.subheader("📋 Liste globale des annonces")
   st.caption(
-      "💡 Cliquez sur n'importe quelle ligne du tableau pour sélectionner"
-      " instantanément le véhicule dans la fiche détaillée ci-dessous."
+      "💡 Cliquez sur n'importe quelle ligne du tableau pour ouvrir"
+      " instantanément sa fiche détaillée ci-dessous. Les liens dans la colonne"
+      " 'Lien' sont cliquables directement."
   )
 
   display_cols = [
@@ -466,7 +467,7 @@ else:
   ]
   table_df = df_filtered[
       [c for c in display_cols if c in df_filtered.columns]
-  ]
+  ].copy()
 
   selection = st.dataframe(
       table_df,
@@ -474,6 +475,13 @@ else:
       on_select="rerun",
       selection_mode="single-row",
       hide_index=True,
+      column_config={
+          "Lien": st.column_config.LinkColumn(
+              "Lien Annonce",
+              help="Cliquez pour ouvrir l'annonce AutoScout24",
+              display_text="🔗 Ouvrir",
+          )
+      },
   )
 
   # Récupération de l'ID cliqué dans le tableau
@@ -485,7 +493,7 @@ else:
 
   st.markdown("---")
 
-  # --- FICHE PROSPECT DÉTAILLÉE ---
+  # --- FICHE PROSPECT DÉTAILLÉE OUVERTE EN DESSOUS ---
   st.subheader("✏️ Fiche Prospect Détaillée")
 
   if df_filtered.empty:
@@ -494,7 +502,6 @@ else:
     all_ids = df_filtered["ID"].tolist()
     all_ids_int = [int(i) for i in all_ids]
 
-    # Gestion de la sélection par défaut (priorité au clic sur le tableau, sinon premier de la liste)
     default_index = 0
     if (
         selected_id_from_table is not None
