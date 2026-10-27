@@ -446,7 +446,7 @@ else:
       else df
   )
 
-  # --- TABLEAU GLOBAL AVEC LIENS CLIQUABLES ---
+  # --- TABLEAU GLOBAL ---
   st.subheader("📋 Liste globale des annonces")
   st.caption(
       "💡 Cliquez sur n'importe quelle ligne du tableau pour ouvrir"
@@ -484,16 +484,27 @@ else:
       },
   )
 
-  # Récupération de l'ID cliqué dans le tableau
+  # CORRECTION DE LA CAPTURE DU CLIC DE LIGNE
   selected_id_from_table = None
-  if selection and selection.get("rows"):
-    selected_row_index = selection["rows"][0]
-    if selected_row_index < len(df_filtered):
-      selected_id_from_table = int(df_filtered.iloc[selected_row_index]["ID"])
+  if selection and "selection" in selection:
+    sel_rows = selection["selection"].get("rows", [])
+    if sel_rows:
+      selected_row_index = sel_rows[0]
+      if selected_row_index < len(df_filtered):
+        selected_id_from_table = int(df_filtered.iloc[selected_row_index]["ID"])
+  elif selection and isinstance(selection, dict) and "rows" in selection:
+    sel_rows = selection["rows"]
+    if sel_rows:
+      selected_row_index = sel_rows[0]
+      if selected_row_index < len(df_filtered):
+        selected_id_from_table = int(df_filtered.iloc[selected_row_index]["ID"])
+
+  if selected_id_from_table is not None:
+    st.session_state.active_id = selected_id_from_table
 
   st.markdown("---")
 
-  # --- FICHE PROSPECT DÉTAILLÉE OUVERTE EN DESSOUS ---
+  # --- FICHE PROSPECT DÉTAILLÉE ---
   st.subheader("✏️ Fiche Prospect Détaillée")
 
   if df_filtered.empty:
@@ -502,14 +513,17 @@ else:
     all_ids = df_filtered["ID"].tolist()
     all_ids_int = [int(i) for i in all_ids]
 
-    default_index = 0
-    if (
-        selected_id_from_table is not None
-        and selected_id_from_table in all_ids_int
-    ):
-      default_index = all_ids_int.index(selected_id_from_table)
-    elif "last_selected_id" in st.session_state and st.session_state.last_selected_id in all_ids_int:
-      default_index = all_ids_int.index(st.session_state.last_selected_id)
+    # Priorité absolue à l'ID cliqué dans le tableau s'il existe
+    if "active_id" not in st.session_state:
+      st.session_state.active_id = all_ids_int[0]
+
+    if selected_id_from_table is not None and selected_id_from_table in all_ids_int:
+      st.session_state.active_id = selected_id_from_table
+
+    if st.session_state.active_id not in all_ids_int:
+      st.session_state.active_id = all_ids_int[0]
+
+    default_index = all_ids_int.index(st.session_state.active_id)
 
     selected_id = st.selectbox(
         "Sélectionner une fiche à consulter / modifier (par ID)",
@@ -518,7 +532,8 @@ else:
         format_func=lambda x: f"ID #{x} - {df_filtered[df_filtered['ID'].astype(int) == x]['Titre'].values[0]} ({df_filtered[df_filtered['ID'].astype(int) == x]['Prix'].values[0]} €)",
     )
 
-    st.session_state.last_selected_id = selected_id
+    # Mémorise le choix du selectbox s'il est manipulé manuellement
+    st.session_state.active_id = selected_id
     row_data = df[df["ID"].astype(int) == selected_id].iloc[0]
 
     col_info1, col_info2 = st.columns([2, 1])
