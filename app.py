@@ -185,7 +185,7 @@ def run_scraper_integrated(worksheet, max_pages=40):
     except Exception:
       continue
 
-  status_text.text("Mise à jour des positions et fusion des notes...")
+  status_text.text("Mise à jour stricte des positions et fusion des notes...")
   scraped_df = pd.DataFrame(scraped_items)
 
   if not db_df.empty:
@@ -267,6 +267,7 @@ def run_scraper_integrated(worksheet, max_pages=40):
     scraped_page_map = dict(zip(scraped_df["Key"], scraped_df["Page"]))
     scraped_link_map = dict(zip(scraped_df["Key"], scraped_df["Lien"]))
 
+    # CORRECTION : Mise à jour stricte de la page pour TOUTES les annonces encore en ligne
     if not db_consolidated_df.empty:
       for key, new_page in scraped_page_map.items():
         if key in existing_keys:
@@ -451,26 +452,45 @@ else:
         int(df_filtered.iloc[0]["ID"]) if not df_filtered.empty else 1
     )
 
+  if "page_tableau" not in st.session_state:
+    st.session_state.page_tableau = 1
+
   st.subheader("📋 Liste globale des annonces")
 
-  # Pagination par 15 annonces
   items_par_page = 15
   total_lignes = len(df_filtered)
   total_pages = max(1, (total_lignes + items_par_page - 1) // items_par_page)
 
-  col_p1, col_p2 = st.columns([1, 3])
-  with col_p1:
-    page_tableau = st.selectbox(
-        "📄 Page",
-        range(1, total_pages + 1),
-        format_func=lambda x: f"Page {x} / {total_pages}",
-    )
+  if st.session_state.page_tableau > total_pages:
+    st.session_state.page_tableau = total_pages
 
-  debut_idx = (page_tableau - 1) * items_par_page
+  # SYSTÈME DE NAVIGATION AVEC FLÈCHES (PRÉCÉDENT / SUIVANT)
+  col_fl1, col_fl2, col_fl3 = st.columns([1, 2, 1])
+  with col_fl1:
+    if st.button("⬅️ Précédent", use_container_width=True):
+      if st.session_state.page_tableau > 1:
+        st.session_state.page_tableau -= 1
+        st.rerun()
+  with col_fl2:
+    st.markdown(
+        f"<h4 style='text-align: center; margin: 0;'>Page"
+        f" {st.session_state.page_tableau} / {total_pages} (Annonces"
+        f" {(st.session_state.page_tableau-1)*items_par_page + 1} à"
+        f" {min(st.session_state.page_tableau*items_par_page, total_lignes)}"
+        f" sur {total_lignes})</h4>",
+        unsafe_allow_html=True,
+    )
+  with col_fl3:
+    if st.button("Suivant ➡️", use_container_width=True):
+      if st.session_state.page_tableau < total_pages:
+        st.session_state.page_tableau += 1
+        st.rerun()
+
+  debut_idx = (st.session_state.page_tableau - 1) * items_par_page
   fin_idx = min(debut_idx + items_par_page, total_lignes)
   df_page = df_filtered.iloc[debut_idx:fin_idx].copy()
 
-  # En-têtes de tableau personnalisés
+  # En-têtes du mini-tableau
   h_id, h_titre, h_annee, h_km, h_prix, h_statut, h_act = st.columns(
       [0.6, 3.5, 0.8, 1, 1, 1.5, 0.8]
   )
@@ -491,7 +511,6 @@ else:
 
   st.markdown("---")
 
-  # Liste des 15 lignes compactes de la page en cours
   for _, row in df_page.iterrows():
     vid = int(row["ID"])
     c_id, c_titre, c_annee, c_km, c_prix, c_statut, c_act = st.columns(
@@ -594,7 +613,7 @@ else:
             "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
         )
         st.link_button(
-            f"🔍 Voir l'annonce (Page {target_page})",
+            f"🔍 Voir l'annonce sur AutoScout24 (Page {target_page})",
             fallback_url,
             use_container_width=True,
         )
@@ -611,6 +630,7 @@ else:
         nouveau_telephone = st.text_input("📞 Téléphone / WhatsApp", value=default_tel)
 
       with f_col2:
+        # CORRECTION : Orthographe de Charliy
         conseillers_possibles = ["", "Ludo", "Elias", "Charliy", "Théo"]
         index_conseiller = (
             conseillers_possibles.index(conseiller_actuel)
@@ -624,6 +644,7 @@ else:
         )
 
       with f_col3:
+        # AJOUT DU STATUT : Vendu / annonce indisponible
         statuts_possibles = [
             "",
             "Appel / répondeur",
@@ -632,6 +653,7 @@ else:
             "Message Whatsapp",
             "Refus",
             "Non francophone",
+            "Vendu / annonce indisponible",
         ]
         current_statut = str(row_data.get("Statut", "")).strip()
         index_statut = (
