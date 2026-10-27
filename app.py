@@ -267,7 +267,6 @@ def run_scraper_integrated(worksheet, max_pages=40):
     scraped_page_map = dict(zip(scraped_df["Key"], scraped_df["Page"]))
     scraped_link_map = dict(zip(scraped_df["Key"], scraped_df["Lien"]))
 
-    # CORRECTION : Mise à jour stricte de la page pour TOUTES les annonces encore en ligne
     if not db_consolidated_df.empty:
       for key, new_page in scraped_page_map.items():
         if key in existing_keys:
@@ -334,7 +333,10 @@ def run_scraper_integrated(worksheet, max_pages=40):
         final_df[col] = ""
 
     final_df = final_df[columns_schema]
-    final_df = final_df.sort_values(by="ID").reset_index(drop=True)
+    # TRI DÉCROISSANT PAR ID : Les plus récents (dernières annonces) en premier !
+    final_df = final_df.sort_values(by="ID", ascending=False).reset_index(
+        drop=True
+    )
 
     worksheet.clear()
     worksheet.update(
@@ -433,6 +435,11 @@ else:
           df[col].fillna("").astype(str).replace("nan", "").replace("<NA>", "")
       )
 
+  # TRI DU DATAFRAME GLOBAL : LES PLUS GRANDS ID (DERNIÈRES ANNONCES) EN HAUT
+  if "ID" in df.columns:
+    df["ID_num"] = pd.to_numeric(df["ID"], errors="coerce").fillna(0)
+    df = df.sort_values(by="ID_num", ascending=False).drop(columns=["ID_num"])
+
   search_query = st.text_input(
       "🔍 Rechercher dans les fiches (Modèle, Ville, Commentaire, Tel, Conseiller...)",
       "",
@@ -455,7 +462,7 @@ else:
   if "page_tableau" not in st.session_state:
     st.session_state.page_tableau = 1
 
-  st.subheader("📋 Liste globale des annonces")
+  st.subheader("📋 Liste globale des annonces (Les plus récentes en premier)")
 
   items_par_page = 15
   total_lignes = len(df_filtered)
@@ -464,7 +471,7 @@ else:
   if st.session_state.page_tableau > total_pages:
     st.session_state.page_tableau = total_pages
 
-  # SYSTÈME DE NAVIGATION AVEC FLÈCHES (PRÉCÉDENT / SUIVANT)
+  # NAVIGATION PAR FLÈCHES
   col_fl1, col_fl2, col_fl3 = st.columns([1, 2, 1])
   with col_fl1:
     if st.button("⬅️ Précédent", use_container_width=True):
@@ -490,7 +497,6 @@ else:
   fin_idx = min(debut_idx + items_par_page, total_lignes)
   df_page = df_filtered.iloc[debut_idx:fin_idx].copy()
 
-  # En-têtes du mini-tableau
   h_id, h_titre, h_annee, h_km, h_prix, h_statut, h_act = st.columns(
       [0.6, 3.5, 0.8, 1, 1, 1.5, 0.8]
   )
@@ -630,7 +636,6 @@ else:
         nouveau_telephone = st.text_input("📞 Téléphone / WhatsApp", value=default_tel)
 
       with f_col2:
-        # CORRECTION : Orthographe de Charliy
         conseillers_possibles = ["", "Ludo", "Elias", "Charliy", "Théo"]
         index_conseiller = (
             conseillers_possibles.index(conseiller_actuel)
@@ -644,7 +649,6 @@ else:
         )
 
       with f_col3:
-        # AJOUT DU STATUT : Vendu / annonce indisponible
         statuts_possibles = [
             "",
             "Appel / répondeur",
