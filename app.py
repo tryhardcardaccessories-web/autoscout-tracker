@@ -2,6 +2,7 @@ from datetime import datetime
 import json
 import os
 import urllib.parse
+from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 from google.oauth2 import service_account
 import gspread
@@ -50,7 +51,7 @@ def get_google_sheet():
     return None
 
 
-st.title("🚗 AutoScout Tracker - CRM Particuliers")
+st.title("🚗 AutoScout Tracker - Particuliers")
 st.markdown(
     "**Zone :** Frontière Belge (20 km autour de Roncq) | **Filtre :**"
     " Particuliers, $\ge$ 2005, $\le$ 200k km"
@@ -495,7 +496,6 @@ else:
   fin_idx = min(debut_idx + items_par_page, total_lignes)
   df_page = df_filtered.iloc[debut_idx:fin_idx].copy()
 
-  # EN-TÊTES DU TABLEAU COMPACT AVEC LA COLONNE CONSEILLER INCLUSE
   h_id, h_titre, h_annee, h_km, h_prix, h_statut, h_cons, h_act = st.columns(
       [0.6, 3.2, 0.8, 1, 1, 1.4, 1.1, 0.8]
   )
@@ -653,6 +653,7 @@ else:
         )
 
       with f_col3:
+        # AJOUT DES NOUVEAUX STATUTS : Mandat OK et Véhicule vendu
         statuts_possibles = [
             "",
             "Appel / répondeur",
@@ -662,6 +663,8 @@ else:
             "Refus",
             "Non francophone",
             "Vendu / annonce indisponible",
+            "Véhicule vendu",
+            "Mandat OK",
         ]
         current_statut = str(row_data.get("Statut", "")).strip()
         index_statut = (
@@ -691,7 +694,9 @@ else:
       )
 
       if submit_button:
-        date_heure_actuelle = datetime.now().strftime("%d/%m/%Y à %H:%M")
+        date_heure_actuelle = datetime.now(ZoneInfo("Europe/Paris")).strftime(
+            "%d/%m/%Y à %H:%M"
+        )
 
         df.loc[df["ID"].astype(int) == selected_id, "Téléphone"] = str(
             nouveau_telephone
