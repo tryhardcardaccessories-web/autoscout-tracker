@@ -1,6 +1,7 @@
 from datetime import datetime
 import json
 import os
+import re
 import urllib.parse
 from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
@@ -58,6 +59,13 @@ st.markdown(
 )
 
 BASE_URL = "https://www.autoscout24.be/fr/lst?fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
+
+
+def clean_text_key(text):
+  """Nettoie une chaîne pour en faire une clé de fusion ultra-robuste."""
+  if not text:
+    return ""
+  return re.sub(r"[^a-z0-9]", "", str(text).lower())
 
 
 def run_scraper_integrated(worksheet, max_pages=40):
@@ -186,14 +194,15 @@ def run_scraper_integrated(worksheet, max_pages=40):
     except Exception:
       continue
 
-  status_text.text("Mise à jour stricte des positions et fusion des notes...")
+  status_text.text("Fusion intelligente anti-doublons...")
   scraped_df = pd.DataFrame(scraped_items)
 
+  # CLÉ DE FUSION INTELLIGENTE : Uniquement Titre + Année + KM (le prix n'est plus dedans pour fusionner les baisses de prix)
   if not db_df.empty:
     db_df["Key"] = (
-        db_df["Titre"].astype(str).str.strip().str.lower()
+        db_df["Titre"].apply(clean_text_key)
         + "_"
-        + db_df["Prix"].astype(str).str.strip()
+        + db_df["Année"].astype(str).str.strip()
         + "_"
         + db_df["KM"].astype(str).str.strip()
     )
@@ -202,132 +211,70 @@ def run_scraper_integrated(worksheet, max_pages=40):
 
   if not scraped_df.empty:
     scraped_df["Key"] = (
-        scraped_df["Titre"].astype(str).str.strip().str.lower()
+        scraped_df["Titre"].apply(clean_text_key)
         + "_"
-        + scraped_df["Prix"].astype(str).str.strip()
+        + scraped_df["Année"].astype(str).str.strip()
         + "_"
         + scraped_df["KM"].astype(str).str.strip()
     )
 
   consolidated_rows = {}
 
+  # 1. On charge d'abord l'existant pour préserver les notes et statuts
   if not db_df.empty:
     for _, row in db_df.iterrows():
       key = row["Key"]
-      if key not in consolidated_rows:
-        consolidated_rows[key] = row.to_dict()
-      else:
-        if not str(consolidated_rows[key].get("Lien", "")).startswith(
-            "http"
-        ) and str(row.get("Lien", "")).startswith("http"):
-          consolidated_rows[key]["Lien"] = row["Lien"]
+      consolidated_rows[key] = row.to_dict()
 
-        existing_tel = str(consolidated_rows[key].get("Téléphone", "")).strip()
-        new_tel = str(row.get("Téléphone", "")).strip()
-        if (
-            existing_tel in ["", "Voir sur l'annonce"]
-            and new_tel not in ["", "Voir sur l'annonce"]
-        ):
-          consolidated_rows[key]["Téléphone"] = new_tel
-
-        existing_statut = str(consolidated_rows[key].get("Statut", "")).strip()
-        new_statut = str(row.get("Statut", "")).strip()
-        if not existing_statut and new_statut:
-          consolidated_rows[key]["Statut"] = new_statut
-
-        existing_conseiller = str(
-            consolidated_rows[key].get("Conseiller", "")
-        ).strip()
-        new_conseiller = str(row.get("Conseiller", "")).strip()
-        if not existing_conseiller and new_conseiller:
-          consolidated_rows[key]["Conseiller"] = new_conseiller
-
-        c1 = str(consolidated_rows[key].get("Commentaires", "")).strip()
-        c2 = str(row.get("Commentaires", "")).strip()
-        if c1 and c2 and c1 != c2:
-          consolidated_rows[key]["Commentaires"] = f"{c1} | {c2}"
-        elif c2 and not c1:
-          consolidated_rows[key]["Commentaires"] = c2
-
-  db_consolidated_df = pd.DataFrame(list(consolidated_rows.values()))
-
-  if not db_consolidated_df.empty and "ID" in db_consolidated_df.columns:
-    current_max_id = (
-        pd.to_numeric(db_consolidated_df["ID"], errors="coerce")
-        .fillna(0)
-        .astype(int)
-        .max()
-    )
-  else:
-    current_max_id = 0
-
-  scraped_keys = set(scraped_df["Key"].tolist()) if not scraped_df.empty else set()
-  existing_keys = set(db_consolidated_df["Key"].tolist()) if not db_consolidated_df.empty else set()
-
+  # 2. Fusion des données scrapées
   if not scraped_df.empty:
-    scraped_page_map = dict(zip(scraped_df["Key"], scraped_df["Page"]))
-    scraped_link_map = dict(zip(scraped_df["Key"], scraped_df["Lien"]))
-
-    if not db_consolidated_df.empty:
-      for key, new_page in scraped_page_map.items():
-        if key in existing_keys:
-          db_consolidated_df.loc[
-              db_consolidated_df["Key"] == key, "Page"
-          ] = int(new_page)
-          new_l = scraped_link_map.get(key, "")
-          if new_l and new_l.startswith("http"):
-            db_consolidated_df.loc[db_consolidated_df["Key"] == key, "Lien"] = (
-                new_l
-            )
-
-    new_entries = []
     for _, row in scraped_df.iterrows():
-      if row["Key"] not in existing_keys:
-        current_max_id += 1
-        new_entries.append({
-            "ID": current_max_id,
-            "Titre": row["Titre"],
-            "Année": row["Année"],
-            "KM": row["KM"],
-            "Prix": row["Prix"],
-            "Ville": row["Ville"],
-            "Téléphone": row["Téléphone"],
-            "Lien": row["Lien"],
-            "Page": int(row["Page"]),
+      key = row["Key"]
+      scraped_dict = row.to_dict()
+
+      if key in consolidated_rows:
+        # Le véhicule existe déjà : on met à jour le prix (nouvelle baisse éventuelle), la page et le lien, mais on garde le suivi
+        consolidated_rows[key]["Page"] = scraped_dict["Page"]
+        if str(scraped_dict.get("Prix", "")) not in ["", "N/C"]:
+          consolidated_rows[key]["Prix"] = scraped_dict["Prix"]
+        if str(scraped_dict.get("Lien", "")).startswith("http"):
+          consolidated_rows[key]["Lien"] = scraped_dict["Lien"]
+      else:
+        # Nouveau véhicule
+        consolidated_rows[key] = {
+            "ID": 0,
+            "Titre": scraped_dict["Titre"],
+            "Année": scraped_dict["Année"],
+            "KM": scraped_dict["KM"],
+            "Prix": scraped_dict["Prix"],
+            "Ville": scraped_dict["Ville"],
+            "Téléphone": scraped_dict["Téléphone"],
+            "Lien": scraped_dict["Lien"],
+            "Page": int(scraped_dict["Page"]),
             "Statut": "",
             "Conseiller": "",
             "Dernière action": "",
             "Commentaires": "",
-            "Key": row["Key"],
-        })
+            "Key": key,
+        }
 
-    full_df = (
-        pd.concat(
-            [db_consolidated_df, pd.DataFrame(new_entries)], ignore_index=True
-        )
-        if new_entries
-        else db_consolidated_df
-    )
-  else:
-    full_df = db_consolidated_df
+  db_consolidated_df = pd.DataFrame(list(consolidated_rows.values()))
 
-  def is_annotated(row):
-    statut = str(row.get("Statut", "")).strip()
-    comment = str(row.get("Commentaires", "")).strip()
-    tel = str(row.get("Téléphone", "")).strip()
-    cons = str(row.get("Conseiller", "")).strip()
-    return (
-        (statut != "")
-        or (comment != "")
-        or (cons != "")
-        or (tel != "" and tel != "Voir sur l'annonce")
-    )
+  if not db_consolidated_df.empty:
+    if "ID" in db_consolidated_df.columns:
+      db_consolidated_df["ID"] = pd.to_numeric(
+          db_consolidated_df["ID"], errors="coerce"
+      ).fillna(0)
+      max_existing_id = int(db_consolidated_df["ID"].max())
+    else:
+      max_existing_id = 0
 
-  if not full_df.empty:
-    kept_df = full_df[
-        full_df["Key"].isin(scraped_keys) | full_df.apply(is_annotated, axis=1)
-    ].copy()
-    final_df = kept_df.drop(columns=["Key"], errors="ignore")
+    for idx, row in db_consolidated_df.iterrows():
+      if row["ID"] == 0:
+        max_existing_id += 1
+        db_consolidated_df.at[idx, "ID"] = max_existing_id
+
+    final_df = db_consolidated_df.drop(columns=["Key"], errors="ignore")
 
     for col in columns_schema:
       if col not in final_df.columns:
@@ -361,18 +308,18 @@ st.markdown("---")
 col_sync1, col_sync2 = st.columns([1, 3])
 with col_sync1:
   if st.button("🔄 Lancer le Scraper (40 Pages)"):
-    with st.spinner("🚀 Scraping, mise à jour des pages et nettoyage..."):
+    with st.spinner("🚀 Scraping et fusion intelligente anti-doublons..."):
       try:
         run_scraper_integrated(worksheet, max_pages=40)
         st.cache_data.clear()
-        st.success("✨ Pages réactualisées et base synchronisée !")
+        st.success("✨ Doublons fusionnés et base mise à jour !")
         st.rerun()
       except Exception as e:
         st.error(f"Erreur lors du scraping : {e}")
 with col_sync2:
   st.markdown(
-      "<br>Actualise les positions exactes des annonces du jour et rassemble tes"
-      " notes.",
+      "<br>Actualise les annonces et fusionne automatiquement les baisses de"
+      " prix.",
       unsafe_allow_html=True,
   )
 st.markdown("---")
@@ -653,7 +600,6 @@ else:
         )
 
       with f_col3:
-        # AJOUT DES NOUVEAUX STATUTS : Mandat OK et Véhicule vendu
         statuts_possibles = [
             "",
             "Appel / répondeur",
