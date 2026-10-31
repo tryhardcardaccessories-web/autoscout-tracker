@@ -1,4 +1,5 @@
 from datetime import datetime
+import io
 import json
 import os
 import re
@@ -8,6 +9,18 @@ from bs4 import BeautifulSoup
 from google.oauth2 import service_account
 import gspread
 import pandas as pd
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.platypus import (
+    HRFlowable,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 import requests
 import streamlit as st
 
@@ -197,7 +210,6 @@ def run_scraper_integrated(worksheet, max_pages=40):
   status_text.text("Fusion intelligente anti-doublons...")
   scraped_df = pd.DataFrame(scraped_items)
 
-  # CLÉ DE FUSION INTELLIGENTE : Uniquement Titre + Année + KM
   if not db_df.empty:
     db_df["Key"] = (
         db_df["Titre"].apply(clean_text_key)
@@ -220,13 +232,11 @@ def run_scraper_integrated(worksheet, max_pages=40):
 
   consolidated_rows = {}
 
-  # 1. Chargement de la BDD existante
   if not db_df.empty:
     for _, row in db_df.iterrows():
       key = row["Key"]
       consolidated_rows[key] = row.to_dict()
 
-  # 2. Fusion ou ajout des éléments scrapés
   if not scraped_df.empty:
     for _, row in scraped_df.iterrows():
       key = row["Key"]
@@ -391,10 +401,13 @@ else:
 
   all_ids_int = [int(i) for i in df["ID"].tolist()]
 
-  if "active_id" not in st.session_state or st.session_state.active_id not in all_ids_int:
+  if (
+      "active_id" not in st.session_state
+      or st.session_state.active_id not in all_ids_int
+  ):
     st.session_state.active_id = all_ids_int[0] if all_ids_int else 1
 
-  # --- 2. FICHE PROSPECT DÉTAILLÉE (EN HAUT) ---
+  # --- 2. FICHE PROSPECT DÉTAILLÉE ---
   st.subheader("✏️ Fiche Prospect Détaillée")
 
   selected_id = st.selectbox(
@@ -467,8 +480,12 @@ else:
 
     with f_col1:
       current_tel = str(row_data.get("Téléphone", "")).strip()
-      default_tel = "+32 " if current_tel in ["", "Voir sur l'annonce"] else current_tel
-      nouveau_telephone = st.text_input("📞 Téléphone / WhatsApp", value=default_tel)
+      default_tel = (
+          "+32 " if current_tel in ["", "Voir sur l'annonce"] else current_tel
+      )
+      nouveau_telephone = st.text_input(
+          "📞 Téléphone / WhatsApp", value=default_tel
+      )
 
     with f_col2:
       conseillers_possibles = ["", "Ludo", "Elias", "Charliy", "Théo"]
@@ -511,7 +528,9 @@ else:
     )
 
     current_comment = (
-        str(row_data["Commentaires"]) if pd.notna(row_data["Commentaires"]) else ""
+        str(row_data["Commentaires"])
+        if pd.notna(row_data["Commentaires"])
+        else ""
     )
     nouveau_commentaire = st.text_area(
         "Commentaire d'appel", value=current_comment
@@ -555,7 +574,7 @@ else:
 
   st.markdown("---")
 
-  # --- 3. MOTEUR DE RECHERCHE ET LISTE GLOBALE (EN BAS) ---
+  # --- 3. MOTEUR DE RECHERCHE ET LISTE GLOBALE ---
   search_query = st.text_input(
       "🔍 Rechercher dans les fiches (Modèle, Ville, Commentaire, Tel, Conseiller...)",
       "",
@@ -656,3 +675,284 @@ else:
       if st.button("👁️", key=f"btn_open_{vid}"):
         st.session_state.active_id = vid
         st.rerun()
+
+  # --- 4. TOUT EN BAS : RAPPORT DE PROSPECTION ET EXPORTATION PDF ---
+  st.markdown("---")
+
+
+  def parse_french_date(date_str):
+    """Extrait la date sous forme datetime.date depuis le format 'DD/MM/YYYY à HH:MM'."""
+    if not date_str or not isinstance(date_str, str):
+      return None
+    try:
+      clean_date = date_str.split(" à ")[0].strip()
+      return datetime.strptime(clean_date, "%d/%m/%Y").date()
+    except Exception:
+      return None
+
+
+  def generate_pdf_report(df_to_export, date_debut, date_fin, selected_cons):
+    """Génère un document PDF avec 1 fiche de prospect complète par page."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=36,
+        bottomMargin=36,
+    )
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        "DocTitle",
+        parent=styles["Heading1"],
+        fontSize=20,
+        leading=24,
+        textColor=colors.HexColor("#1E3A8A"),
+        spaceAfter=10,
+    )
+    sub_style = ParagraphStyle(
+        "SubTitle",
+        parent=styles["Normal"],
+        fontSize=11,
+        textColor=colors.HexColor("#4B5563"),
+        spaceAfter=15,
+    )
+    header_style = ParagraphStyle(
+        "CardHeader",
+        parent=styles["Heading2"],
+        fontSize=14,
+        leading=18,
+        textColor=colors.HexColor("#1E3A8A"),
+        spaceAfter=8,
+    )
+    body_bold = ParagraphStyle(
+        "BodyBold",
+        parent=styles["Normal"],
+        fontSize=10,
+        leading=14,
+        fontName="Helvetica-Bold",
+    )
+    body_normal = ParagraphStyle(
+        "BodyNormal", parent=styles["Normal"], fontSize=10, leading=14
+    )
+
+    story = []
+
+    # Couverture / En-tête global
+    story.append(
+        Paragraph("🚗 AGENCE SWITCH AUTO - RONCQ", title_style)
+    )
+    period_txt = (
+        f"Période du {date_debut.strftime('%d/%m/%Y')} au"
+        f" {date_fin.strftime('%d/%m/%Y')}"
+    )
+    cons_txt = (
+        f" | Conseiller : {selected_cons}"
+        if selected_cons != "Tous les conseillers"
+        else " | Tous les conseillers"
+    )
+    story.append(
+        Paragraph(
+            f"<b>Rapport de Prospection PDF</b> - {period_txt}{cons_txt}<br/>Nombre"
+            f" de fiches traitées : <b>{len(df_to_export)}</b>",
+            sub_style,
+        )
+    )
+    story.append(
+        HRFlowable(
+            width="100%",
+            thickness=1.5,
+            color=colors.HexColor("#1E3A8A"),
+            spaceAfter=20,
+        )
+    )
+
+    first_card = True
+
+    for _, row in df_to_export.iterrows():
+      if not first_card:
+        story.append(PageBreak())
+      else:
+        first_card = False
+
+      # Titre de la fiche
+      story.append(
+          Paragraph(
+              f"FICHE PROSPECT #{row['ID']} - {row['Titre']}", header_style
+          )
+      )
+      story.append(
+          HRFlowable(
+              width="100%",
+              thickness=0.5,
+              color=colors.HexColor("#CBD5E1"),
+              spaceAfter=12,
+          )
+      )
+
+      # Informations Véhicule
+      data_vehicule = [
+          [
+              Paragraph("Prix :", body_bold),
+              Paragraph(f"{row['Prix']} €", body_normal),
+              Paragraph("Année :", body_bold),
+              Paragraph(f"{row['Année']}", body_normal),
+          ],
+          [
+              Paragraph("Kilométrage :", body_bold),
+              Paragraph(f"{row['KM']} km", body_normal),
+              Paragraph("Ville :", body_bold),
+              Paragraph(f"{row['Ville']}", body_normal),
+          ],
+      ]
+      t_vehicule = Table(data_vehicule, colWidths=[100, 160, 100, 160])
+      t_vehicule.setStyle(
+          TableStyle([
+              (
+                  "BACKGROUND",
+                  (0, 0),
+                  (-1, -1),
+                  colors.HexColor("#F8FAFC"),
+              ),
+              ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+              ("PADDING", (0, 0), (-1, -1), 6),
+          ])
+      )
+      story.append(t_vehicule)
+      story.append(Spacer(1, 15))
+
+      # Suivi de Prospection
+      data_prospe = [
+          [
+              Paragraph("Conseiller :", body_bold),
+              Paragraph(f"{row['Conseiller'] or '-'}", body_normal),
+          ],
+          [
+              Paragraph("Statut d'appel :", body_bold),
+              Paragraph(f"{row['Statut'] or 'Non spécifié'}", body_normal),
+          ],
+          [
+              Paragraph("Téléphone / WhatsApp :", body_bold),
+              Paragraph(f"{row['Téléphone'] or '-'}", body_normal),
+          ],
+          [
+              Paragraph("Dernière action :", body_bold),
+              Paragraph(f"{row['Dernière action'] or '-'}", body_normal),
+          ],
+          [
+              Paragraph("Lien de l'annonce :", body_bold),
+              Paragraph(
+                  f"<font color='blue'><u>{row['Lien']}</u></font>"
+                  if row["Lien"]
+                  else "-",
+                  body_normal,
+              ),
+          ],
+      ]
+      t_prospe = Table(data_prospe, colWidths=[150, 370])
+      t_prospe.setStyle(
+          TableStyle([
+              ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+              ("PADDING", (0, 0), (-1, -1), 6),
+              ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1F5F9")),
+          ])
+      )
+      story.append(t_prospe)
+      story.append(Spacer(1, 15))
+
+      # Commentaires
+      story.append(Paragraph("<b>Commentaires d'appel / Historique :</b>", body_bold))
+      story.append(Spacer(1, 5))
+      comment_txt = row["Commentaires"] if str(row["Commentaires"]).strip() else "Aucun commentaire saisi."
+      
+      data_comm = [[Paragraph(comment_txt.replace('\n', '<br/>'), body_normal)]]
+      t_comm = Table(data_comm, colWidths=[520])
+      t_comm.setStyle(TableStyle([
+          ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#FFFBEB")),
+          ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor("#FDE68A")),
+          ('PADDING', (0,0), (-1,-1), 10),
+      ]))
+      story.append(t_comm)
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+
+  with st.expander(
+      "📊 Rapport & Exportation PDF des fiches traitées", expanded=False
+  ):
+    st.markdown(
+        "Extrayez les fiches ayant un traçage sous forme de **fiches PDF"
+        " individuelles** (1 fiche par page)."
+    )
+
+    c_pdf1, c_pdf2, c_pdf3 = st.columns(3)
+
+    today = datetime.now(ZoneInfo("Europe/Paris")).date()
+    default_start = today.replace(day=1)
+
+    with c_pdf1:
+      date_debut = st.date_input("Date de début", value=default_start)
+    with c_pdf2:
+      date_fin = st.date_input("Date de fin", value=today)
+    with c_pdf3:
+      liste_conseillers = [
+          "Tous les conseillers",
+          "Ludo",
+          "Elias",
+          "Charliy",
+          "Théo",
+      ]
+      selected_cons = st.selectbox(
+          "Filtrer par conseiller", liste_conseillers
+      )
+
+    df["Parsed_Date"] = df["Dernière action"].apply(parse_french_date)
+
+    # Condition 1 : Il y a un traçage (date, conseiller, statut ou commentaire)
+    df_pdf = df[
+        (df["Parsed_Date"].notna())
+        | (df["Conseiller"].str.strip() != "")
+        | (df["Statut"].str.strip() != "")
+        | (df["Commentaires"].str.strip() != "")
+    ].copy()
+
+    # Condition 2 : Filtre par dates
+    if date_debut and date_fin:
+      df_pdf = df_pdf[
+          (df_pdf["Parsed_Date"].isna())
+          | (
+              (df_pdf["Parsed_Date"] >= date_debut)
+              & (df_pdf["Parsed_Date"] <= date_fin)
+          )
+      ]
+
+    # Condition 3 : Filtre par conseiller
+    if selected_cons != "Tous les conseillers":
+      df_pdf = df_pdf[df_pdf["Conseiller"] == selected_cons]
+
+    if df_pdf.empty:
+      st.warning(
+          "Aucune fiche traitée ne correspond aux critères sélectionnés."
+      )
+    else:
+      st.info(
+          f"📌 **{len(df_pdf)} fiches** prêtes pour la génération du rapport PDF."
+      )
+
+      pdf_buffer = generate_pdf_report(
+          df_pdf, date_debut, date_fin, selected_cons
+      )
+
+      filename = f"rapport_prospection_{date_debut.strftime('%Y%m%d')}_{date_fin.strftime('%Y%m%d')}.pdf"
+
+      st.download_button(
+          label="📥 Télécharger le Rapport PDF complet",
+          data=pdf_buffer,
+          file_name=filename,
+          mime="application/pdf",
+          use_container_width=True,
+      )
