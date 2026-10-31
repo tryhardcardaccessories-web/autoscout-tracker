@@ -157,12 +157,9 @@ def run_scraper_integrated(worksheet, max_pages=40):
         for part in full_text.split("|"):
           part_clean = part.strip()
           if "€" in part_clean and len(part_clean) < 15:
-            prix = (
-                part_clean.replace("€", "")
-                .replace(".", "")
-                .replace(" ", "")
-                .strip()
-            )
+            cleaned_p = re.sub(r"[^\d]", "", part_clean)
+            if cleaned_p:
+              prix = cleaned_p
             break
 
         km = "N/C"
@@ -173,13 +170,9 @@ def run_scraper_integrated(worksheet, max_pages=40):
               and ("/" not in part_clean)
               and len(part_clean) < 12
           ):
-            km = (
-                part_clean.lower()
-                .replace("km", "")
-                .replace(".", "")
-                .replace(" ", "")
-                .strip()
-            )
+            cleaned_km = re.sub(r"[^\d]", "", part_clean)
+            if cleaned_km:
+              km = cleaned_km
             break
 
         annee = "N/C"
@@ -452,19 +445,17 @@ else:
       target_page = int(row_data["Page"])
 
       try:
-        p_val = int(
-            str(row_data["Prix"])
-            .replace(" ", "")
-            .replace("€", "")
-            .replace(".", "")
+        cleaned_p_fallback = re.sub(r"[^\d]", "", str(row_data["Prix"]))
+        p_val = int(cleaned_p_fallback) if cleaned_p_fallback else 0
+        price_filter_url = (
+            f"&pricefrom={max(0, p_val - 1000)}&priceto={p_val + 1000}"
         )
-        price_filter = f"&pricefrom={max(0, p_val - 1000)}&priceto={p_val + 1000}"
       except Exception:
-        price_filter = ""
+        price_filter_url = ""
 
       safe_query = urllib.parse.quote(model_query)
       fallback_url = (
-          f"https://www.autoscout24.be/fr/lst?q={safe_query}{price_filter}"
+          f"https://www.autoscout24.be/fr/lst?q={safe_query}{price_filter_url}"
           f"&page={target_page}&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
           "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
       )
@@ -501,7 +492,6 @@ else:
       )
 
     with f_col3:
-      # LISTE DE STATUTS HARMONISÉE
       statuts_possibles = [
           "",
           "Appel / répondeur",
@@ -597,7 +587,6 @@ else:
       )
 
     with fc2:
-      # UTILISATION STRICTE DES STATUTS OFFICIELS DANS LES FILTRES
       tous_statuts = ["Tous"] + statuts_possibles[1:]
       filtre_statut = st.selectbox("📋 Statut d'appel", tous_statuts, index=0)
 
@@ -605,27 +594,19 @@ else:
       recherche_texte = st.text_input("🔤 Mot-clé libre", "")
 
     with fc4:
-      try:
-        prix_numeriques = pd.to_numeric(
-            df["Prix"]
-            .astype(str)
-            .str.replace(" ", "")
-            .str.replace("€", "")
-            .str.replace(".", ""),
-            errors="coerce",
-        )
-        min_p_db = (
-            int(prix_numeriques.min())
-            if not prix_numeriques.isna().all()
-            else 0
-        )
-        max_p_db = (
-            int(prix_numeriques.max())
-            if not prix_numeriques.isna().all()
-            else 50000
-        )
-      except Exception:
-        min_p_db, max_p_db = 0, 50000
+
+      def clean_price_val(val):
+        try:
+          cleaned = re.sub(r"[^\d]", "", str(val))
+          return int(cleaned) if cleaned else -1
+        except Exception:
+          return -1
+
+      prix_numeriques = df["Prix"].apply(clean_price_val)
+      valid_prices = prix_numeriques[prix_numeriques != -1]
+
+      min_p_db = int(valid_prices.min()) if not valid_prices.empty else 0
+      max_p_db = int(valid_prices.max()) if not valid_prices.empty else 50000
 
       filtre_prix = st.slider(
           "💶 Fourchette de prix (€)",
@@ -658,14 +639,6 @@ else:
         .apply(lambda x: x.str.contains(q, case=False))
         .any(axis=1)
     ]
-
-
-  def clean_price_val(val):
-    try:
-      return int(str(val).replace(" ", "").replace("€", "").replace(".", ""))
-    except Exception:
-      return -1
-
 
   df_filtered["Prix_Num"] = df_filtered["Prix"].apply(clean_price_val)
   df_filtered = df_filtered[
@@ -832,7 +805,6 @@ else:
 
     story = []
 
-    # Couverture / En-tête global
     story.append(Paragraph("🚗 AGENCE SWITCH AUTO - RONCQ", title_style))
     period_txt = (
         f"Période du {date_debut.strftime('%d/%m/%Y')} au"
@@ -867,7 +839,6 @@ else:
       else:
         first_card = False
 
-      # Titre de la fiche
       story.append(
           Paragraph(
               f"FICHE PROSPECT #{row['ID']} - {row['Titre']}", header_style
@@ -882,7 +853,6 @@ else:
           )
       )
 
-      # Informations Véhicule
       data_vehicule = [
           [
               Paragraph("Prix :", body_bold),
@@ -913,7 +883,6 @@ else:
       story.append(t_vehicule)
       story.append(Spacer(1, 15))
 
-      # Suivi de Prospection
       data_prospe = [
           [
               Paragraph("Conseiller :", body_bold),
@@ -952,7 +921,6 @@ else:
       story.append(t_prospe)
       story.append(Spacer(1, 15))
 
-      # Commentaires
       story.append(
           Paragraph("<b>Commentaires d'appel / Historique :</b>", body_bold)
       )
@@ -1008,7 +976,6 @@ else:
 
     df["Parsed_Date"] = df["Dernière action"].apply(parse_french_date)
 
-    # Condition 1 : Il y a un traçage (date, conseiller, statut ou commentaire)
     df_pdf = df[
         (df["Parsed_Date"].notna())
         | (df["Conseiller"].str.strip() != "")
@@ -1016,7 +983,6 @@ else:
         | (df["Commentaires"].str.strip() != "")
     ].copy()
 
-    # Condition 2 : Filtre par dates
     if date_debut and date_fin:
       df_pdf = df_pdf[
           (df_pdf["Parsed_Date"].isna())
@@ -1026,7 +992,6 @@ else:
           )
       ]
 
-    # Condition 3 : Filtre par conseiller
     if selected_cons != "Tous les conseillers":
       df_pdf = df_pdf[df_pdf["Conseiller"] == selected_cons]
 
