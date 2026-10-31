@@ -501,16 +501,16 @@ else:
       )
 
     with f_col3:
+      # LISTE DE STATUTS HARMONISÉE
       statuts_possibles = [
           "",
           "Appel / répondeur",
           "Injoignable Tel",
           "Message via site",
-          "Message Whatsapp",
+          "Message WhatsApp",
           "Refus",
           "Non francophone",
-          "Vendu / annonce indisponible",
-          "Véhicule vendu",
+          "Annonce KO / Indisponible",
           "Mandat OK",
       ]
       current_statut = str(row_data.get("Statut", "")).strip()
@@ -597,17 +597,8 @@ else:
       )
 
     with fc2:
-      tous_statuts = ["Tous"] + sorted(
-          list(
-              set(
-                  df["Statut"]
-                  .astype(str)
-                  .str.strip()
-                  .replace("", "Non contacté")
-                  .tolist()
-              )
-          )
-      )
+      # UTILISATION STRICTE DES STATUTS OFFICIELS DANS LES FILTRES
+      tous_statuts = ["Tous"] + statuts_possibles[1:]
       filtre_statut = st.selectbox("📋 Statut d'appel", tous_statuts, index=0)
 
     with fc3:
@@ -658,15 +649,7 @@ else:
       df_filtered = df_filtered[df_filtered["Conseiller"] == filtre_conseiller]
 
   if filtre_statut != "Tous":
-    if filtre_statut == "Non contacté":
-      df_filtered = df_filtered[
-          df_filtered["Statut"]
-          .astype(str)
-          .str.strip()
-          .isin(["", "nan", "<NA>", "-"])
-      ]
-    else:
-      df_filtered = df_filtered[df_filtered["Statut"] == filtre_statut]
+    df_filtered = df_filtered[df_filtered["Statut"] == filtre_statut]
 
   if recherche_texte.strip():
     q = recherche_texte.strip()
@@ -850,9 +833,7 @@ else:
     story = []
 
     # Couverture / En-tête global
-    story.append(
-        Paragraph("🚗 AGENCE SWITCH AUTO - RONCQ", title_style)
-    )
+    story.append(Paragraph("🚗 AGENCE SWITCH AUTO - RONCQ", title_style))
     period_txt = (
         f"Période du {date_debut.strftime('%d/%m/%Y')} au"
         f" {date_fin.strftime('%d/%m/%Y')}"
@@ -972,17 +953,25 @@ else:
       story.append(Spacer(1, 15))
 
       # Commentaires
-      story.append(Paragraph("<b>Commentaires d'appel / Historique :</b>", body_bold))
+      story.append(
+          Paragraph("<b>Commentaires d'appel / Historique :</b>", body_bold)
+      )
       story.append(Spacer(1, 5))
-      comment_txt = row["Commentaires"] if str(row["Commentaires"]).strip() else "Aucun commentaire saisi."
-      
-      data_comm = [[Paragraph(comment_txt.replace('\n', '<br/>'), body_normal)]]
+      comment_txt = (
+          row["Commentaires"]
+          if str(row["Commentaires"]).strip()
+          else "Aucun commentaire saisi."
+      )
+
+      data_comm = [[Paragraph(comment_txt.replace("\n", "<br/>"), body_normal)]]
       t_comm = Table(data_comm, colWidths=[520])
-      t_comm.setStyle(TableStyle([
-          ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#FFFBEB")),
-          ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor("#FDE68A")),
-          ('PADDING', (0,0), (-1,-1), 10),
-      ]))
+      t_comm.setStyle(
+          TableStyle([
+              ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFFBEB")),
+              ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#FDE68A")),
+              ("PADDING", (0, 0), (-1, -1), 10),
+          ])
+      )
       story.append(t_comm)
 
     doc.build(story)
@@ -1015,9 +1004,7 @@ else:
           "Charliy",
           "Théo",
       ]
-      selected_cons = st.selectbox(
-          "Filtrer par conseiller", liste_conseillers
-      )
+      selected_cons = st.selectbox("Filtrer par conseiller", liste_conseillers)
 
     df["Parsed_Date"] = df["Dernière action"].apply(parse_french_date)
 
@@ -1049,14 +1036,17 @@ else:
       )
     else:
       st.info(
-          f"📌 **{len(df_pdf)} fiches** prêtes pour la génération du rapport PDF."
+          f"📌 **{len(df_pdf)} fiches** prêtes pour la génération du rapport"
+          " PDF."
       )
 
       pdf_buffer = generate_pdf_report(
           df_pdf, date_debut, date_fin, selected_cons
       )
 
-      filename = f"rapport_prospection_{date_debut.strftime('%Y%m%d')}_{date_fin.strftime('%Y%m%d')}.pdf"
+      filename = (
+          f"rapport_prospection_{date_debut.strftime('%Y%m%d')}_{date_fin.strftime('%Y%m%d')}.pdf"
+      )
 
       st.download_button(
           label="📥 Télécharger le Rapport PDF complet",
