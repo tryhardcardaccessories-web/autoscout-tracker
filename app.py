@@ -440,23 +440,17 @@ else:
       )
     else:
       raw_title = str(row_data["Titre"])
-      words = raw_title.split()
-      model_query = " ".join(words[:3]) if len(words) >= 3 else raw_title
+      # Nettoyage radical des caractères spéciaux pour ne garder que les mots clés (ex: "Mazda CX-5")
+      clean_query_text = re.sub(r"[^a-zA-Z0-9\s]", "", raw_title)
+      words = clean_query_text.split()
+      model_query = " ".join(words[:2]) if len(words) >= 2 else clean_query_text
       target_page = int(row_data["Page"])
 
-      try:
-        cleaned_p_fallback = re.sub(r"[^\d]", "", str(row_data["Prix"]))
-        p_val = int(cleaned_p_fallback) if cleaned_p_fallback else 0
-        price_filter_url = (
-            f"&pricefrom={max(0, p_val - 1000)}&priceto={p_val + 1000}"
-        )
-      except Exception:
-        price_filter_url = ""
-
       safe_query = urllib.parse.quote(model_query)
+      # LIEN DE SECOURS SANS AUCUN FILTRE DE PRIX AUTOMATIQUE
       fallback_url = (
-          f"https://www.autoscout24.be/fr/lst?q={safe_query}{price_filter_url}"
-          f"&page={target_page}&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
+          f"https://www.autoscout24.be/fr/lst?q={safe_query}&page={target_page}"
+          "&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
           "&pe_category=1%2C2%2C3&powertype=kw&sort=age&ustate=N%2CU&zipr=20&atype=C&zip=59223&lat=50.7536&lon=3.12028"
       )
       st.link_button(
