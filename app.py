@@ -6,10 +6,14 @@ from datetime import datetime
 from io import BytesIO
 
 # Import de ReportLab pour la génération de PDF professionnelle
-from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    HAS_REPORTLAB = True
+except ImportError:
+    HAS_REPORTLAB = False
 
 # Configuration de la page Streamlit
 st.set_page_config(
@@ -92,12 +96,10 @@ def generate_pdf_report(agency_name, history_list):
         spaceAfter=15
     )
     
-    # En-tête du document
     elements.append(Paragraph("SWITCH AUTO — Rapport de Prospection Mandats Simples", title_style))
     elements.append(Paragraph(f"<b>Agence Cible :</b> {agency_name} | <b>Date :</b> {datetime.now().strftime('%d/%m/%Y à %H:%M')}", subtitle_style))
     elements.append(Spacer(1, 10))
     
-    # Construction du tableau des données
     table_data = [["Heure", "Titre / Véhicule", "Marque", "Modèle", "Année", "Kilométrage"]]
     
     for item in history_list:
@@ -145,9 +147,9 @@ if "history_by_agency" not in st.session_state:
     st.session_state["history_by_agency"] = {}
 
 st.title("🚗 Switch Auto — Hub, Chasse & Rapport PDF")
-st.caption("Filtres géographiques stricts : LeBonCoin (Roncq +30km) | La Centrale (Dép 59/62) | Export PDF pro")
+st.caption("Filtres géographiques stricts : LeBonCoin (Roncq +30km) | La Centrale (Dép 59/62)")
 
-# --- BARRE LATÉRALE : HUB & SECTEUR ---
+# --- BARRE LATÉRALE ---
 st.sidebar.header("🏪 Hub des 11 Agences Concurrentes")
 selected_agency_name = st.sidebar.selectbox("Choisir une agence :", list(AGENCES_CONCURRENCE.keys()))
 agency_url = AGENCES_CONCURRENCE[selected_agency_name]
@@ -162,11 +164,10 @@ include_62 = st.sidebar.checkbox("Inclure aussi le Pas-de-Calais (62) sur La Cen
 if selected_agency_name not in st.session_state["history_by_agency"]:
     st.session_state["history_by_agency"][selected_agency_name] = []
 
-# --- INTERFACE PRINCIPALE EN DEUX COLONNES ---
 col_left, col_right = st.columns([1.2, 1], gap="large")
 
 # ==============================================================================
-# COLONNE GAUCHE : ANALYSEUR & FORMULAIRE
+# COLONNE GAUCHE
 # ==============================================================================
 with col_left:
     st.header("📋 Analyseur par Copier-Coller Global")
@@ -183,7 +184,7 @@ with col_left:
             st.error("Veuillez coller le texte de la page.")
 
     st.markdown("---")
-    st.subheader("Vérification & Sauvegarde")
+    st.subheader("Vérification & Enregistrement")
     
     with st.form("adjust_form"):
         input_title = st.text_input("Titre détecté", value=st.session_state["target_car"]["title"])
@@ -192,7 +193,7 @@ with col_left:
         input_year = st.text_input("Année", value=st.session_state["target_car"]["year"])
         input_km = st.text_input("Kilométrage", value=st.session_state["target_car"]["km"])
         
-        save_entry = st.form_submit_button("💾 Valider et enregistrer dans la session")
+        save_entry = st.form_submit_button("💾 Enregistrer dans l'historique chronologique", type="primary")
         if save_entry:
             car_entry = {
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
@@ -206,13 +207,12 @@ with col_left:
             st.session_state["target_car"] = car_entry
             
             agency_hist = st.session_state["history_by_agency"][selected_agency_name]
-            if car_entry not in agency_hist:
-                agency_hist.append(car_entry)
-            
-            st.success(f"Enregistré dans l'historique de **{selected_agency_name}** !")
+            agency_hist.append(car_entry)
+            st.success(f"Véhicule ajouté à l'historique de {selected_agency_name} !")
+            st.rerun()
 
 # ==============================================================================
-# COLONNE DROITE : MIRRORING & HISTORIQUE DE L'AGENCE
+# COLONNE DROITE
 # ==============================================================================
 with col_right:
     st.header("👤 Mirroring Particuliers & Historique")
@@ -255,7 +255,7 @@ with col_right:
         st.write("")
         st.link_button(f"🔵 Miroir La Centrale (Dép. {departments})", lc_part_url, use_container_width=True)
     else:
-        st.info("👈 Analyse ou valide une annonce à gauche pour afficher les liens de recherche ici.")
+        st.info("👈 Colle une annonce à gauche et valide-la pour afficher les liens de recherche.")
         
     st.markdown("---")
     st.subheader(f"📊 Historique de Session : {selected_agency_name}")
@@ -266,13 +266,19 @@ with col_right:
         df_hist = pd.DataFrame(agency_history)[["timestamp", "title", "make", "model", "year", "km"]]
         st.dataframe(df_hist, use_container_width=True)
         
-        # Bouton d'export PDF pro
-        pdf_bytes = generate_pdf_report(selected_agency_name, agency_history)
-        st.download_button(
-            label=f"📄 Télécharger le rapport PDF ({selected_agency_name})",
-            data=pdf_bytes,
-            file_name=f"Rapport_Prospection_{selected_agency_name.replace(' ', '_')}.pdf",
-            mime="application/pdf"
-        )
+        st.markdown("---")
+        
+        if HAS_REPORTLAB:
+            pdf_bytes = generate_pdf_report(selected_agency_name, agency_history)
+            st.download_button(
+                label=f"📄 Télécharger le rapport PDF ({selected_agency_name})",
+                data=pdf_bytes,
+                file_name=f"Rapport_Prospection_{selected_agency_name.replace(' ', '_')}.pdf",
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True
+            )
+        else:
+            st.error("⚠️ La librairie `reportlab` n'est pas installée sur le serveur. Ajoute `reportlab` dans ton fichier `requirements.txt` sur GitHub.")
     else:
-        st.caption("Aucune recherche enregistrée pour cette agence pour le moment.")
+        st.warning("⚠️ Aucun véhicule enregistré dans cette session pour l'instant. Colle une annonce à gauche et clique sur « 💾 Enregistrer dans l'historique » pour activer l'export PDF.")
