@@ -281,4 +281,4 @@ with col_right:
         else:
             st.error("⚠️ La librairie `reportlab` n'est pas installée sur le serveur. Ajoute `reportlab` dans ton fichier `requirements.txt` sur GitHub.")
     else:
-        st.warning("⚠️ Aucun véhicule enregistré dans cette session pour l'instant. Colle une annonce à gauche et clique sur « 💾 Enregistrer dans l'historique » pour activer l'export PDF.")
+        st.warning("⚠️ Aucun véhicule enregistré dans cette session pour l'instant. Colle une annonce à gauche et clique sur « 💾 Enregistrer dans l'historique chronologique » pour activer l'export PDF.")
