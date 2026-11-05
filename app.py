@@ -3,17 +3,23 @@ import pandas as pd
 import urllib.parse
 import re
 from datetime import datetime
+from io import BytesIO
+
+# Import de ReportLab pour la génération de PDF professionnelle
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 # Configuration de la page Streamlit
 st.set_page_config(
-    page_title="Switch Auto — Hub, Chasse & Historique PDF",
+    page_title="Switch Auto — Hub, Chasse & Rapport PDF",
     page_icon="🚗",
     layout="wide"
 )
 
 # --- CONSTANTES DE LOCALISATION ---
 SECTEUR_LBC = "Roncq_59223__30000"  # LeBonCoin : Roncq + 30 km
-DEPARTEMENT_LA_CENTRALE = "59"      # La Centrale : Département 59 (Nord)
 
 AGENCES_CONCURRENCE = {
     "1. Transakauto Roncq": "https://www.leboncoin.fr/boutique/7447928",
@@ -41,20 +47,17 @@ def parse_full_ad_text(raw_text):
     
     lines = [l.strip() for l in raw_text.split("\n") if l.strip()]
     
-    # Recherche de l'année
     for line in lines:
         year_match = re.search(r'\b(20[0-2]\d)\b', line)
         if year_match and (not extracted["year"] or extracted["year"] == "2018"):
             extracted["year"] = year_match.group(1)
             
-        # Recherche du kilométrage
         km_match = re.search(r'(\d+[\s\d]*)\s*km', line, re.IGNORECASE)
         if km_match:
             clean_km = re.sub(r'\D', '', km_match.group(1))
             if len(clean_km) >= 3:
                 extracted["km"] = clean_km
                 
-    # Extraction du titre / marque / modèle dans les 10 premières lignes
     for line in lines[:10]:
         if len(line) > 5 and not any(w in line.lower() for w in ["leboncoin", "pro", "€", "favoris", "partager", "déposer"]):
             extracted["title"] = line
@@ -64,6 +67,69 @@ def parse_full_ad_text(raw_text):
             break
             
     return extracted
+
+def generate_pdf_report(agency_name, history_list):
+    """Génère un fichier PDF soigné pour l'agence spécifiée."""
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    elements = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=styles['Heading1'],
+        fontName='Helvetica-Bold',
+        fontSize=18,
+        textColor=colors.HexColor("#1E3A8A"),
+        spaceAfter=6
+    )
+    subtitle_style = ParagraphStyle(
+        'SubTitleStyle',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=11,
+        textColor=colors.HexColor("#4B5563"),
+        spaceAfter=15
+    )
+    
+    # En-tête du document
+    elements.append(Paragraph("SWITCH AUTO — Rapport de Prospection Mandats Simples", title_style))
+    elements.append(Paragraph(f"<b>Agence Cible :</b> {agency_name} | <b>Date :</b> {datetime.now().strftime('%d/%m/%Y à %H:%M')}", subtitle_style))
+    elements.append(Spacer(1, 10))
+    
+    # Construction du tableau des données
+    table_data = [["Heure", "Titre / Véhicule", "Marque", "Modèle", "Année", "Kilométrage"]]
+    
+    for item in history_list:
+        table_data.append([
+            item.get("timestamp", ""),
+            item.get("title", ""),
+            item.get("make", ""),
+            item.get("model", ""),
+            item.get("year", ""),
+            f"{item.get('km', '')} km"
+        ])
+        
+    t = Table(table_data, colWidths=[65, 170, 70, 70, 50, 85])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1E3A8A")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#F3F4F6")),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('TOPPADDING', (0, 1), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+    ]))
+    
+    elements.append(t)
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 # --- INITIALISATION SESSION ---
 if "target_car" not in st.session_state:
@@ -75,12 +141,11 @@ if "target_car" not in st.session_state:
         "km": "100000"
     }
 
-# Historique des recherches par agence : { "Transakauto Roncq": [ {car1}, {car2} ] }
 if "history_by_agency" not in st.session_state:
     st.session_state["history_by_agency"] = {}
 
-st.title("🚗 Switch Auto — Hub, Chasse & Historique Pro")
-st.caption("Filtres géographiques stricts : LeBonCoin (Roncq +30km) | La Centrale (Dép 59/62) | Historique exportable")
+st.title("🚗 Switch Auto — Hub, Chasse & Rapport PDF")
+st.caption("Filtres géographiques stricts : LeBonCoin (Roncq +30km) | La Centrale (Dép 59/62) | Export PDF pro")
 
 # --- BARRE LATÉRALE : HUB & SECTEUR ---
 st.sidebar.header("🏪 Hub des 11 Agences Concurrentes")
@@ -94,7 +159,6 @@ st.sidebar.header("🎯 Paramétrage de la Cible")
 delta_km = st.sidebar.slider("Tolérance delta kilométrage (± en km) :", min_value=50, max_value=10000, value=500, step=50)
 include_62 = st.sidebar.checkbox("Inclure aussi le Pas-de-Calais (62) sur La Centrale", value=False)
 
-# Initialisation du registre pour l'agence sélectionnée
 if selected_agency_name not in st.session_state["history_by_agency"]:
     st.session_state["history_by_agency"][selected_agency_name] = []
 
@@ -141,7 +205,6 @@ with col_left:
             }
             st.session_state["target_car"] = car_entry
             
-            # Anti-doublon dans l'historique de l'agence
             agency_hist = st.session_state["history_by_agency"][selected_agency_name]
             if car_entry not in agency_hist:
                 agency_hist.append(car_entry)
@@ -203,13 +266,13 @@ with col_right:
         df_hist = pd.DataFrame(agency_history)[["timestamp", "title", "make", "model", "year", "km"]]
         st.dataframe(df_hist, use_container_width=True)
         
-        # Export CSV rapide
-        csv_data = df_hist.to_csv(index=False).encode('utf-8')
+        # Bouton d'export PDF pro
+        pdf_bytes = generate_pdf_report(selected_agency_name, agency_history)
         st.download_button(
-            label=f"📥 Télécharger l'historique ({selected_agency_name}) en CSV",
-            data=csv_data,
-            file_name=f"Prospection_{selected_agency_name.replace(' ', '_')}.csv",
-            mime="text/csv"
+            label=f"📄 Télécharger le rapport PDF ({selected_agency_name})",
+            data=pdf_bytes,
+            file_name=f"Rapport_Prospection_{selected_agency_name.replace(' ', '_')}.pdf",
+            mime="application/pdf"
         )
     else:
         st.caption("Aucune recherche enregistrée pour cette agence pour le moment.")
