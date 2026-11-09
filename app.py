@@ -440,14 +440,12 @@ else:
       )
     else:
       raw_title = str(row_data["Titre"])
-      # Nettoyage radical des caractères spéciaux pour ne garder que les mots clés (ex: "Mazda CX-5")
       clean_query_text = re.sub(r"[^a-zA-Z0-9\s]", "", raw_title)
       words = clean_query_text.split()
       model_query = " ".join(words[:2]) if len(words) >= 2 else clean_query_text
       target_page = int(row_data["Page"])
 
       safe_query = urllib.parse.quote(model_query)
-      # LIEN DE SECOURS SANS AUCUN FILTRE DE PRIX AUTOMATIQUE
       fallback_url = (
           f"https://www.autoscout24.be/fr/lst?q={safe_query}&page={target_page}"
           "&fregfrom=2005&custtype=P&cy=B&damaged_listing=exclude&desc=1&kmto=200000"
@@ -562,7 +560,7 @@ else:
   st.subheader("🔍 Filtres & Recherche Avancée")
 
   with st.expander("🛠️ Affiner les critères de recherche", expanded=True):
-    fc1, fc2, fc3, fc4 = st.columns(4)
+    fc1, fc2 = st.columns(2)
 
     with fc1:
       tous_conseillers = ["Tous"] + sorted(
@@ -584,10 +582,15 @@ else:
       tous_statuts = ["Tous"] + statuts_possibles[1:]
       filtre_statut = st.selectbox("📋 Statut d'appel", tous_statuts, index=0)
 
+    fc3, fc4, fc5 = st.columns(3)
+
     with fc3:
       recherche_texte = st.text_input("🔤 Mot-clé libre", "")
 
     with fc4:
+      recherche_telephone = st.text_input("📞 Recherche Téléphone", "", placeholder="Ex: 0475 ou +32...")
+
+    with fc5:
 
       def clean_price_val(val):
         try:
@@ -632,6 +635,12 @@ else:
         df_filtered.astype(str)
         .apply(lambda x: x.str.contains(q, case=False))
         .any(axis=1)
+    ]
+
+  if recherche_telephone.strip():
+    q_tel = recherche_telephone.strip()
+    df_filtered = df_filtered[
+        df_filtered["Téléphone"].astype(str).str.contains(q_tel, case=False, na=False)
     ]
 
   df_filtered["Prix_Num"] = df_filtered["Prix"].apply(clean_price_val)
