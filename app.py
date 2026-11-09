@@ -639,8 +639,10 @@ else:
 
   if recherche_telephone.strip():
     q_tel = recherche_telephone.strip()
+    # Sécurisation stricte de la colonne Téléphone en string pour éviter les erreurs ArrowInvalid
+    df_filtered["Téléphone"] = df_filtered["Téléphone"].fillna("").astype(str)
     df_filtered = df_filtered[
-        df_filtered["Téléphone"].astype(str).str.contains(q_tel, case=False, na=False)
+        df_filtered["Téléphone"].str.contains(q_tel, case=False, na=False)
     ]
 
   df_filtered["Prix_Num"] = df_filtered["Prix"].apply(clean_price_val)
